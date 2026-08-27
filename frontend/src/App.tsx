@@ -492,7 +492,14 @@ export default function App() {
           <div className="review-count"><RotateCcw size={15} /><span>今日复习</span><strong>{dueCards}</strong></div>
           <button className="icon-button mobile-only" title="章节信息" disabled={!chapter} onClick={() => setMobileDetailsOpen(true)}><MoreHorizontal size={19} /></button>
           <button className="secondary-button desktop-action" onClick={() => setCatalogOpen(true)}><FileImage size={16} />导入目录</button>
-          <button className="primary-button" onClick={() => void exportProject(project).catch(() => setToast('链接文件无法读取，请先检查原文件或重新导入'))}><Download size={16} /><span className="desktop-action">导出 Markdown</span></button>
+          <button className="primary-button" onClick={() => {
+            try {
+              exportProject(project)
+              setToast('Markdown 已导出')
+            } catch {
+              setToast('Markdown 导出失败')
+            }
+          }}><Download size={16} /><span className="desktop-action">导出 Markdown</span></button>
         </div>
       </header>
 
