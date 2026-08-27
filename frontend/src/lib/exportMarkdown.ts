@@ -3,6 +3,7 @@ import saveAs from 'file-saver'
 import TurndownService from 'turndown'
 import type { ChapterAttachment, CourseProject, Screenshot } from '../types'
 import { attachmentBytes, parseDataUrl, safeArchivePath } from './fileUtils'
+import { formatStudyDuration, getStudyElapsedSeconds } from './studyTimer'
 
 const flagLabels = {
   key: '重点',
@@ -57,6 +58,8 @@ export function buildProjectMarkdown(project: CourseProject, imageReference: Ima
   project.chapters.forEach((chapter, chapterIndex) => {
     lines.push('', `${'#'.repeat(Math.min(chapter.level + 1, 6))} ${chapter.title}`, '')
     lines.push(`**学习状态：** ${{ not_started: '未开始', learning: '学习中', completed: '已完成' }[chapter.status]}  `)
+    lines.push(`**计划用时：** ${chapter.studyPlanMinutes} 分钟  `)
+    if (getStudyElapsedSeconds(chapter) > 0) lines.push(`**实际用时：** ${formatStudyDuration(getStudyElapsedSeconds(chapter))}  `)
     if (chapter.flags.length) lines.push(`**内容标记：** ${chapter.flags.map((flag) => flagLabels[flag]).join('、')}  `)
     if (chapter.videoTimestamp) lines.push(`**视频时间：** ${chapter.videoTimestamp}  `)
     if (chapter.tags.length) lines.push(`**标签：** ${chapter.tags.join('、')}  `)

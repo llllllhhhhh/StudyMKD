@@ -22,7 +22,9 @@ import {
   Lightbulb,
   Menu,
   MoreHorizontal,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RotateCcw,
   Search,
@@ -42,6 +44,7 @@ import { exportProject } from './lib/exportMarkdown'
 import { formatFileSize } from './lib/fileUtils'
 import { deleteManagedAttachment, materializeChapterFiles, revealManagedPath } from './lib/nativeBridge'
 import { loadData, saveData } from './lib/storage'
+import { formatCountdown, formatStudyDuration, getStudyElapsedSeconds } from './lib/studyTimer'
 import type { AppData, Chapter, ChapterAttachment, CourseProject, HighlightKind, ReviewCard, Screenshot, StudyStatus } from './types'
 
 const ImageAnnotator = lazy(() => import('./components/ImageAnnotator'))
@@ -85,6 +88,7 @@ export default function App() {
   const [editingScreenshot, setEditingScreenshot] = useState<Screenshot>()
   const [attachmentViewerId, setAttachmentViewerId] = useState<string | null>(null)
   const [attachmentImportKind, setAttachmentImportKind] = useState<AttachmentImportKind | null>(null)
+  const [clockNow, setClockNow] = useState(() => Date.now())
   const screenshotInput = useRef<HTMLInputElement>(null)
   const attachmentInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement | null>(null)
@@ -120,6 +124,17 @@ export default function App() {
     const now = Date.now()
     return data.projects.flatMap((item) => item.chapters).flatMap((item) => item.reviewCards).filter((card) => new Date(card.dueAt).getTime() <= now).length
   }, [data])
+
+  const hasRunningTimer = useMemo(() => Boolean(data?.projects.some((item) => (
+    item.chapters.some((chapterItem) => chapterItem.status === 'learning' && chapterItem.studyStartedAt)
+  ))), [data])
+
+  useEffect(() => {
+    if (!hasRunningTimer) return
+    setClockNow(Date.now())
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [hasRunningTimer])
 
   if (!data || !project) {
     return <div className="loading-screen"><BookOpen size={25} /><span>正在打开课程…</span></div>
@@ -407,8 +422,56 @@ export default function App() {
     setToast('复习卡片已删除')
   }
 
+  const changeStudyStatus = (status: StudyStatus) => {
+    if (!chapter) return
+    const now = Date.now()
+    const elapsed = getStudyElapsedSeconds(chapter, now)
+    updateChapter({
+      status,
+      studyElapsedSeconds: elapsed,
+      studyStartedAt: status === 'learning'
+        ? chapter.studyStartedAt ?? new Date(now).toISOString()
+        : null,
+    })
+  }
+
+  const pauseStudyTimer = () => {
+    if (!chapter?.studyStartedAt) return
+    updateChapter({
+      studyElapsedSeconds: getStudyElapsedSeconds(chapter),
+      studyStartedAt: null,
+    })
+  }
+
+  const resumeStudyTimer = () => {
+    if (!chapter) return
+    updateChapter({ status: 'learning', studyStartedAt: new Date().toISOString() })
+  }
+
+  const resetStudyTimer = () => {
+    if (!chapter) return
+    const elapsed = getStudyElapsedSeconds(chapter)
+    if (elapsed > 0 && !window.confirm('重置当前章节的学习计时？')) return
+    updateChapter({
+      studyElapsedSeconds: 0,
+      studyStartedAt: chapter.status === 'learning' ? new Date().toISOString() : null,
+    })
+  }
+
   const completed = project.chapters.filter((item) => item.status === 'completed').length
   const progress = project.chapters.length ? Math.round((completed / project.chapters.length) * 100) : 0
+  const courseElapsedSeconds = project.chapters.reduce((total, item) => total + getStudyElapsedSeconds(item, clockNow), 0)
+  const chapterElapsedSeconds = chapter ? getStudyElapsedSeconds(chapter, clockNow) : 0
+  const timerRemainingSeconds = chapter ? (chapter.studyPlanMinutes * 60) - chapterElapsedSeconds : 0
+  const timerProgress = chapter ? Math.min(100, (chapterElapsedSeconds / (chapter.studyPlanMinutes * 60)) * 100) : 0
+  const timerRunning = Boolean(chapter?.status === 'learning' && chapter.studyStartedAt)
+  const timerStateLabel = chapter?.status === 'completed'
+    ? '已完成'
+    : timerRunning
+      ? '进行中'
+      : chapterElapsedSeconds > 0
+        ? '已暂停'
+        : '待开始'
 
   return (
     <div className="app-shell">
@@ -443,6 +506,9 @@ export default function App() {
           <div className="course-progress">
             <div className="progress-copy"><span>{completed}/{project.chapters.length} 节</span><strong>{progress}%</strong></div>
             <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+            {progress === 100 && project.chapters.length > 0 && (
+              <div className="course-total-time"><Clock3 size={13} /><span>总用时</span><strong>{formatStudyDuration(courseElapsedSeconds)}</strong></div>
+            )}
           </div>
           <nav className="chapter-list" aria-label="课程章节">
             {project.chapters.map((item) => {
@@ -488,6 +554,7 @@ export default function App() {
               <span>{statusMeta[chapter.status].label}</span>
               <span>更新于 {formatUpdated(chapter.updatedAt)}</span>
               {chapter.videoTimestamp && <span>视频 {chapter.videoTimestamp}</span>}
+              {chapterElapsedSeconds > 0 && <span>学习 {formatStudyDuration(chapterElapsedSeconds)}</span>}
             </div>
           </div>
 
@@ -618,9 +685,43 @@ export default function App() {
             <div className="status-segmented">
               {(Object.keys(statusMeta) as StudyStatus[]).map((status) => {
                 const Icon = statusMeta[status].icon
-                return <button key={status} className={chapter.status === status ? 'active' : ''} title={statusMeta[status].label} onClick={() => updateChapter({ status })}><Icon size={15} /><span>{statusMeta[status].label}</span></button>
+                return <button key={status} className={chapter.status === status ? 'active' : ''} title={statusMeta[status].label} onClick={() => changeStudyStatus(status)}><Icon size={15} /><span>{statusMeta[status].label}</span></button>
               })}
             </div>
+          </section>
+
+          <section className="detail-section study-timer-section">
+            <div className="detail-heading-row timer-heading">
+              <label className="detail-label" htmlFor="study-plan">章节倒计时</label>
+              <span className={`timer-state ${timerRunning ? 'running' : ''}`}>{timerStateLabel}</span>
+            </div>
+            <div className={`study-timer-display ${timerRemainingSeconds < 0 ? 'overtime' : ''}`}>
+              <span>{timerRemainingSeconds < 0 ? '超时' : '剩余'}</span>
+              <strong>{formatCountdown(timerRemainingSeconds)}</strong>
+              <div className="timer-progress-track"><span style={{ width: `${timerProgress}%` }} /></div>
+            </div>
+            <div className="timer-controls">
+              <label className="timer-plan-input" htmlFor="study-plan">
+                <span>计划</span>
+                <input
+                  id="study-plan"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  step="5"
+                  value={chapter.studyPlanMinutes}
+                  onChange={(event) => updateChapter({ studyPlanMinutes: Math.max(1, Math.min(1440, Math.round(Number(event.target.value) || 1))) })}
+                />
+                <span>分钟</span>
+              </label>
+              <div className="timer-icon-actions">
+                <button className="icon-button" type="button" title={timerRunning ? '暂停倒计时' : '开始或继续倒计时'} onClick={timerRunning ? pauseStudyTimer : resumeStudyTimer}>
+                  {timerRunning ? <Pause size={15} /> : <Play size={15} />}
+                </button>
+                <button className="icon-button" type="button" title="重置章节计时" onClick={resetStudyTimer}><RotateCcw size={15} /></button>
+              </div>
+            </div>
+            {chapterElapsedSeconds > 0 && <p className="timer-elapsed">已学习 {formatStudyDuration(chapterElapsedSeconds)}</p>}
           </section>
 
           <section className="detail-section">

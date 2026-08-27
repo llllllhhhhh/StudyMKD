@@ -41,6 +41,9 @@ export interface Chapter {
   title: string
   level: number
   status: StudyStatus
+  studyPlanMinutes: number
+  studyElapsedSeconds: number
+  studyStartedAt: string | null
   noteHtml: string
   videoTimestamp: string
   tags: string[]

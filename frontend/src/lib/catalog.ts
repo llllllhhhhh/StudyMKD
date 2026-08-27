@@ -10,6 +10,8 @@ export function isBlankPlaceholder(chapters: Chapter[]) {
   return chapter.title === '开始学习'
     && !chapter.noteHtml
     && !chapter.videoTimestamp
+    && !chapter.studyElapsedSeconds
+    && !chapter.studyStartedAt
     && !chapter.tags.length
     && !chapter.flags.length
     && !chapter.screenshots.length

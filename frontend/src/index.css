@@ -69,6 +69,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .progress-copy strong { color: var(--teal-dark); font-weight: 600; }
 .progress-track { height: 4px; overflow: hidden; background: #e4e7e3; border-radius: 2px; }
 .progress-track span { display: block; height: 100%; background: var(--teal); transition: width .25s ease; }
+.course-total-time { min-height: 28px; margin-top: 9px; padding-top: 8px; border-top: 1px solid #e4e7e3; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.course-total-time svg { color: var(--teal); }
+.course-total-time strong { margin-left: auto; color: var(--teal-dark); font-size: 11px; font-weight: 650; }
 .chapter-list { flex: 1; overflow-y: auto; padding: 10px 8px; }
 .chapter-row { width: 100%; height: 38px; border: 0; background: transparent; display: flex; align-items: center; gap: 9px; border-radius: var(--radius); color: #58625d; cursor: pointer; overflow: hidden; text-align: left; }
 .chapter-row:hover { background: #f0f2ee; color: var(--ink); }
@@ -228,6 +231,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .status-segmented button { min-width: 0; height: 36px; border: 0; border-right: 1px solid var(--line); background: #fff; display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--muted); cursor: pointer; font-size: 11px; }
 .status-segmented button:last-child { border-right: 0; }
 .status-segmented button.active { color: var(--teal-dark); background: var(--teal-soft); font-weight: 600; }
+.study-timer-section { background: #f7f9f7; }
+.timer-heading { align-items: center; margin-bottom: 10px; }
+.timer-heading .detail-label { margin-bottom: 0; }
+.timer-state { padding: 3px 6px; border-radius: 4px; color: #737d78; background: #e7eae7; font-size: 9px !important; font-weight: 650; }
+.timer-state.running { color: #9a6114; background: #f7e9c8; }
+.study-timer-display { height: 86px; padding: 13px 14px 10px; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 5px 8px; border: 1px solid #d8dfda; border-radius: var(--radius); background: #fff; }
+.study-timer-display > span { align-self: center; color: var(--quiet); font-size: 10px; font-weight: 600; }
+.study-timer-display > strong { color: #253b37; font-family: Consolas, 'Courier New', monospace; font-size: 27px; line-height: 1; font-weight: 650; }
+.study-timer-display.overtime > span, .study-timer-display.overtime > strong { color: #b44c3e; }
+.timer-progress-track { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 2px; background: #e7ebe8; }
+.timer-progress-track span { display: block; height: 100%; background: var(--teal); transition: width .25s ease; }
+.study-timer-display.overtime .timer-progress-track span { background: #bf584a; }
+.timer-controls { min-height: 36px; margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.timer-plan-input { min-width: 0; height: 34px; padding: 0 8px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--quiet); background: #fff; font-size: 10px; }
+.timer-plan-input:focus-within { border-color: var(--teal); }
+.timer-plan-input input { width: 48px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 11px; font-weight: 600; }
+.timer-icon-actions { flex: 0 0 auto; display: flex; gap: 2px; }
+.timer-icon-actions .icon-button { width: 32px; height: 32px; border: 1px solid var(--line); background: #fff; }
+.timer-icon-actions .icon-button:hover { border-color: #9bbdb8; color: var(--teal-dark); background: var(--teal-soft); }
+.timer-elapsed { margin: 6px 0 0; color: var(--quiet); font-size: 9px; text-align: right; }
 .input-with-icon { height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; color: var(--quiet); }
 .input-with-icon:focus-within { border-color: var(--teal); }
 .input-with-icon input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 12px; }
