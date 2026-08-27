@@ -1,0 +1,10 @@
+{
+  "name": "keji-backend",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "drogon",
+    "opencv",
+    "tesseract",
+    "sqlite3"
+  ]
+}

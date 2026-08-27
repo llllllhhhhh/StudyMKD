@@ -1,0 +1,11 @@
+frontend/node_modules/
+frontend/node_modules.incomplete/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+backend/build/
+backend/data/
+data/
+.DS_Store
+Thumbs.db
