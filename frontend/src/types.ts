@@ -29,6 +29,8 @@ export interface Screenshot {
   annotationWidth?: number
   annotationHeight?: number
   originalDataUrl?: string
+  nativePath?: string
+  nativeRelativePath?: string
 }
 
 export interface ReviewCard {

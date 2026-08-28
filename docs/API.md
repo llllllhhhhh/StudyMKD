@@ -20,4 +20,6 @@ The bridge must return `name`, `relativePath`, `size`, `mime`, `storageMode`, an
 
 Managed deletion must resolve the target from the stored project, chapter, and relative attachment path under the managed root. It may remove empty managed parent directories, but must never delete linked source files or user-selected export folders.
 
+Course rename and deletion use the same managed-root boundary. Rename moves only the project directory derived from the existing project id/title to the directory derived from the same id and new title. Course deletion recursively removes only that derived managed project directory; linked sources and user-selected export folders are outside this root and are never touched.
+
 The frontend currently uses IndexedDB and browser-side OCR so it runs without the native toolchain. The API has the same state boundary intended for the desktop build; switching persistence only requires replacing `src/lib/storage.ts` and `src/lib/ocr.ts`.

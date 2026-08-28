@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -13,6 +13,8 @@ type NativeLocation = { id: string; title: string }
 type MaterializeRequest = { project: NativeLocation; chapter: NativeLocation; files: NativeFile[]; openExplorer?: boolean }
 type RevealRequest = { project: NativeLocation; chapter: NativeLocation; relativePath?: string }
 type DeleteManagedRequest = { project: NativeLocation; chapter: NativeLocation; relativePath: string }
+type RenameManagedProjectRequest = { project: NativeLocation; title: string }
+type DeleteManagedProjectRequest = { project: NativeLocation }
 
 function safeSegment(value: string, fallback: string) {
   const cleaned = value.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/g, '').trim()
@@ -32,6 +34,10 @@ function safeRelativePath(value: string) {
 
 function managedDirectory(project: NativeLocation, chapter: NativeLocation) {
   return resolve(bridgeRoot, locationSegment(project, '课程'), locationSegment(chapter, '章节'))
+}
+
+function managedProjectDirectory(project: NativeLocation) {
+  return resolve(bridgeRoot, locationSegment(project, '课程'))
 }
 
 function assertWithinRoot(target: string) {
@@ -126,6 +132,28 @@ async function deleteManaged(payload: DeleteManagedRequest) {
   return { removed, path: target }
 }
 
+async function renameManagedProject(payload: RenameManagedProjectRequest) {
+  const source = managedProjectDirectory(payload.project)
+  const target = managedProjectDirectory({ ...payload.project, title: payload.title })
+  assertWithinRoot(source)
+  assertWithinRoot(target)
+  if (source === target) return { moved: false, oldPath: source, newPath: target }
+  try {
+    await rename(source, target)
+    return { moved: true, oldPath: source, newPath: target }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { moved: false, oldPath: source, newPath: target }
+    throw error
+  }
+}
+
+async function deleteManagedProject(payload: DeleteManagedProjectRequest) {
+  const directory = managedProjectDirectory(payload.project)
+  assertWithinRoot(directory)
+  await rm(directory, { recursive: true, force: true })
+  return { removed: true, path: directory }
+}
+
 export function nativeFolderBridge(): Plugin {
   return {
     name: 'keji-native-folder-bridge',
@@ -147,6 +175,12 @@ export function nativeFolderBridge(): Plugin {
           }
           if (request.method === 'POST' && url === '/api/native/delete-managed') {
             return sendJson(response, 200, await deleteManaged(await readJson<DeleteManagedRequest>(request)))
+          }
+          if (request.method === 'POST' && url === '/api/native/rename-managed-project') {
+            return sendJson(response, 200, await renameManagedProject(await readJson<RenameManagedProjectRequest>(request)))
+          }
+          if (request.method === 'POST' && url === '/api/native/delete-managed-project') {
+            return sendJson(response, 200, await deleteManagedProject(await readJson<DeleteManagedProjectRequest>(request)))
           }
           return sendJson(response, 404, { error: '接口不存在' })
         } catch (error) {

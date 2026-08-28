@@ -1,4 +1,4 @@
-import type { Chapter, ChapterAttachment, CourseProject } from '../types'
+import type { Chapter, ChapterAttachment, CourseProject, Screenshot } from '../types'
 import { attachmentFile } from './fileUtils'
 
 type MaterializeResult = {
@@ -14,6 +14,17 @@ async function fileBase64(attachment: ChapterAttachment) {
     reader.onerror = () => reject(reader.error ?? new Error('文件读取失败'))
     reader.readAsDataURL(file)
   })
+}
+
+function dataUrlBase64(dataUrl: string) {
+  const separator = dataUrl.indexOf(',')
+  if (separator < 0) throw new Error('截图数据格式无效')
+  return dataUrl.slice(separator + 1)
+}
+
+function screenshotExtension(dataUrl: string) {
+  const mime = dataUrl.match(/^data:([^;,]+)/)?.[1]
+  return ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' } as Record<string, string>)[mime ?? ''] ?? 'png'
 }
 
 async function nativeRequest<T>(path: string, body?: unknown) {
@@ -59,5 +70,43 @@ export async function deleteManagedAttachment(project: CourseProject, chapter: C
     project: location(project),
     chapter: location(chapter),
     relativePath: attachment.relativePath,
+  })
+}
+
+export function screenshotManagedRelativePath(screenshot: Screenshot) {
+  return `screenshots/${screenshot.id}.${screenshotExtension(screenshot.dataUrl)}`
+}
+
+export async function materializeChapterScreenshots(project: CourseProject, chapter: Chapter, screenshots: Screenshot[]) {
+  const files = screenshots.map((screenshot) => ({
+    relativePath: screenshotManagedRelativePath(screenshot),
+    base64: dataUrlBase64(screenshot.dataUrl),
+  }))
+  return nativeRequest<MaterializeResult>('materialize', {
+    project: location(project),
+    chapter: location(chapter),
+    files,
+    openExplorer: false,
+  })
+}
+
+export async function deleteManagedRelativePath(project: CourseProject, chapter: Chapter, relativePath: string) {
+  return nativeRequest<{ removed: boolean; path: string }>('delete-managed', {
+    project: location(project),
+    chapter: location(chapter),
+    relativePath,
+  })
+}
+
+export async function renameManagedProject(project: CourseProject, title: string) {
+  return nativeRequest<{ moved: boolean; oldPath: string; newPath: string }>('rename-managed-project', {
+    project: { id: project.id, title: project.title },
+    title,
+  })
+}
+
+export async function deleteManagedProject(project: CourseProject) {
+  return nativeRequest<{ removed: boolean; path: string }>('delete-managed-project', {
+    project: { id: project.id, title: project.title },
   })
 }

@@ -5,7 +5,6 @@ import {
   BookOpen,
   CalendarClock,
   Check,
-  ChevronDown,
   Circle,
   Clock3,
   Download,
@@ -35,14 +34,18 @@ import {
 import CatalogDialog, { type CatalogImportMode } from './components/CatalogDialog'
 import AttachmentViewer from './components/AttachmentViewer'
 import AttachmentImportDialog, { type AttachmentImportKind, type AttachmentStorageMode } from './components/AttachmentImportDialog'
+import CoursePicker from './components/CoursePicker'
+import DeleteProjectDialog from './components/DeleteProjectDialog'
 import NewProjectDialog from './components/NewProjectDialog'
 import NoteEditor from './components/NoteEditor'
+import RenameProjectDialog from './components/RenameProjectDialog'
 import StudyPlannerDialog from './components/StudyPlannerDialog'
 import { createChapter, createProject, getInitialData, makeId } from './lib/data'
 import { isBlankPlaceholder, mergeCatalogChapters, removeChapterFromList } from './lib/catalog'
 import { exportProject } from './lib/exportMarkdown'
 import { formatFileSize } from './lib/fileUtils'
-import { deleteManagedAttachment, materializeChapterFiles, revealManagedPath } from './lib/nativeBridge'
+import { deleteManagedAttachment, deleteManagedProject, deleteManagedRelativePath, materializeChapterFiles, materializeChapterScreenshots, renameManagedProject, revealManagedPath, screenshotManagedRelativePath } from './lib/nativeBridge'
+import { findDuplicateProject } from './lib/projectNames'
 import { loadData, saveData } from './lib/storage'
 import { formatCountdown, formatStudyDuration, getStudyElapsedSeconds } from './lib/studyTimer'
 import { buildStudyForecast, formatPlannerDate } from './lib/studyPlanner'
@@ -91,10 +94,42 @@ function formatUpdated(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
+function hasNativeProjectCopies(project: CourseProject) {
+  return project.chapters.some((chapter) => (
+    chapter.screenshots.length > 0
+    || chapter.attachments?.some((attachment) => Boolean(attachment.nativePath))
+  ))
+}
+
+function projectWithRenamedNativePaths(project: CourseProject, title: string, oldPath?: string, newPath?: string) {
+  const canReplacePath = Boolean(oldPath && newPath)
+  return {
+    ...project,
+    title,
+    chapters: project.chapters.map((chapter) => ({
+      ...chapter,
+      screenshots: chapter.screenshots.map((screenshot) => {
+        if (!screenshot.nativePath || !canReplacePath) return screenshot
+        const matchesRoot = screenshot.nativePath.toLocaleLowerCase().startsWith(oldPath!.toLocaleLowerCase())
+        return matchesRoot ? { ...screenshot, nativePath: `${newPath}${screenshot.nativePath.slice(oldPath!.length)}` } : screenshot
+      }),
+      attachments: (chapter.attachments ?? []).map((attachment) => {
+        if (!attachment.nativePath || !canReplacePath) return attachment
+        const matchesRoot = attachment.nativePath.toLocaleLowerCase().startsWith(oldPath!.toLocaleLowerCase())
+        return matchesRoot ? { ...attachment, nativePath: `${newPath}${attachment.nativePath.slice(oldPath!.length)}` } : attachment
+      }),
+    })),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 export default function App() {
   const [data, setData] = useState<AppData>()
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [renameProjectId, setRenameProjectId] = useState<string | null>(null)
+  const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null)
+  const [projectDeleteBusy, setProjectDeleteBusy] = useState(false)
   const [studyPlannerOpen, setStudyPlannerOpen] = useState(false)
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false)
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false)
@@ -165,8 +200,42 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [hasRunningTimer])
 
-  if (!data || !project) {
+  if (!data) {
     return <div className="loading-screen"><BookOpen size={25} /><span>正在打开课程…</span></div>
+  }
+
+  if (!project) {
+    const createFirstProject = (title: string, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
+      const next = createProject(title, expectedDurationValue, expectedDurationUnit)
+      setData({ projects: [next], activeProjectId: next.id, activeChapterId: next.chapters[0].id })
+    }
+    return (
+      <div className="app-shell no-project-shell">
+        <header className="topbar">
+          <div className="brand-group">
+            <div className="brand-mark"><BookOpen size={18} /></div>
+            <span className="brand-name">笔记</span>
+            <span className="brand-divider" />
+            <CoursePicker projects={[]} activeProjectId="" onSelect={() => undefined} onCreate={() => setNewProjectOpen(true)} onRename={() => undefined} onDelete={() => undefined} />
+          </div>
+        </header>
+        <main className="no-project-state">
+          <div className="empty-course-icon"><FolderTree size={26} /></div>
+          <p className="eyebrow">课程目录</p>
+          <h1>还没有课程</h1>
+          <p>新建课程后即可导入目录并记录学习内容。</p>
+          <button className="primary-button" type="button" onClick={() => setNewProjectOpen(true)}><Plus size={16} />新建课程</button>
+        </main>
+        <NewProjectDialog
+          open={newProjectOpen}
+          projects={[]}
+          onClose={() => setNewProjectOpen(false)}
+          onCreate={createFirstProject}
+          onUseExisting={() => undefined}
+          onReplaceExisting={() => undefined}
+        />
+      </div>
+    )
   }
 
   const mutateProject = (projectId: string, updater: (current: CourseProject) => CourseProject) => {
@@ -199,8 +268,97 @@ export default function App() {
   }
 
   const addProject = (title: string, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
+    const duplicate = findDuplicateProject(data.projects, title)
+    if (duplicate) {
+      setActiveProject(duplicate.id)
+      setToast(`已切换到已有课程“${duplicate.title}”`)
+      return
+    }
     const next = createProject(title, expectedDurationValue, expectedDurationUnit)
     setData({ projects: [...data.projects, next], activeProjectId: next.id, activeChapterId: next.chapters[0].id })
+  }
+
+  const removeProjectManagedDirectory = async (target: CourseProject) => {
+    if (!hasNativeProjectCopies(target)) return
+    await deleteManagedProject(target)
+  }
+
+  const renameProject = async (projectId: string, title: string) => {
+    const target = data.projects.find((item) => item.id === projectId)
+    if (!target) return
+    try {
+      const nativeMove = hasNativeProjectCopies(target) ? await renameManagedProject(target, title) : undefined
+      setData((current) => current ? {
+        ...current,
+        projects: current.projects.map((item) => item.id === projectId
+          ? projectWithRenamedNativePaths(item, title, nativeMove?.oldPath, nativeMove?.newPath)
+          : item),
+      } : current)
+      setToast(`课程已重命名为“${title}”`)
+    } catch {
+      setToast('课程重命名失败，托管文件夹未能移动')
+    }
+  }
+
+  const deleteProject = async (target: CourseProject) => {
+    setProjectDeleteBusy(true)
+    try {
+      await removeProjectManagedDirectory(target)
+      setData((current) => {
+        if (!current) return current
+        const index = current.projects.findIndex((item) => item.id === target.id)
+        const projects = current.projects.filter((item) => item.id !== target.id)
+        if (current.activeProjectId !== target.id) return { ...current, projects }
+        const next = projects[Math.max(0, Math.min(index, projects.length - 1))]
+        return { ...current, projects, activeProjectId: next?.id ?? '', activeChapterId: next?.chapters[0]?.id ?? '' }
+      })
+      setDeleteProjectId(null)
+      setToast(`已删除课程“${target.title}”`)
+    } catch {
+      setToast('课程删除失败，应用托管副本未能清理')
+    } finally {
+      setProjectDeleteBusy(false)
+    }
+  }
+
+  const replaceExistingWithNewProject = async (existingProjectId: string, title: string, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
+    const existing = data.projects.find((item) => item.id === existingProjectId)
+    if (!existing) return
+    try {
+      await removeProjectManagedDirectory(existing)
+      const next = createProject(title, expectedDurationValue, expectedDurationUnit)
+      setData((current) => current ? {
+        projects: current.projects.map((item) => item.id === existingProjectId ? next : item),
+        activeProjectId: next.id,
+        activeChapterId: next.chapters[0].id,
+      } : current)
+      setToast(`已替换课程“${title}”`)
+    } catch {
+      setToast('课程替换失败，已有课程保持不变')
+    }
+  }
+
+  const replaceExistingWithCurrentProject = async (projectId: string, existingProjectId: string, title: string) => {
+    const currentProject = data.projects.find((item) => item.id === projectId)
+    const existing = data.projects.find((item) => item.id === existingProjectId)
+    if (!currentProject || !existing) return
+    let nativeMove: Awaited<ReturnType<typeof renameManagedProject>> | undefined
+    try {
+      nativeMove = hasNativeProjectCopies(currentProject) ? await renameManagedProject(currentProject, title) : undefined
+      await removeProjectManagedDirectory(existing)
+      const renamed = projectWithRenamedNativePaths(currentProject, title, nativeMove?.oldPath, nativeMove?.newPath)
+      setData((current) => current ? {
+        projects: current.projects.filter((item) => item.id !== existingProjectId).map((item) => item.id === projectId ? renamed : item),
+        activeProjectId: projectId,
+        activeChapterId: current.activeProjectId === projectId ? current.activeChapterId : renamed.chapters[0]?.id ?? '',
+      } : current)
+      setToast(`当前课程已替换同名课程“${title}”`)
+    } catch {
+      if (nativeMove?.moved) {
+        await renameManagedProject({ ...currentProject, title }, currentProject.title).catch(() => undefined)
+      }
+      setToast('同名课程替换失败，两个课程均保持不变')
+    }
   }
 
   const saveStudyPlan = (plan: StudyPlan, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
@@ -261,7 +419,7 @@ export default function App() {
     if (!chapter) return
     const files = Array.from(event.target.files ?? [])
     if (!files.length) return
-    const screenshots = await Promise.all(files.map(async (file) => ({
+    const screenshots: Screenshot[] = await Promise.all(files.map(async (file) => ({
       id: makeId(),
       name: file.name,
       dataUrl: await fileToDataUrl(file),
@@ -269,13 +427,35 @@ export default function App() {
       timestamp: chapter.videoTimestamp,
       createdAt: new Date().toISOString(),
     })))
-    updateChapter({ screenshots: [...chapter.screenshots, ...screenshots] })
+    let storedScreenshots = screenshots
+    try {
+      const materialized = await materializeChapterScreenshots(project, chapter, screenshots)
+      const paths = new Map(materialized.files.map((file) => [file.relativePath, file.nativePath]))
+      storedScreenshots = screenshots.map((screenshot) => {
+        const nativeRelativePath = screenshotManagedRelativePath(screenshot)
+        return { ...screenshot, nativeRelativePath, nativePath: paths.get(nativeRelativePath) }
+      })
+    } catch {
+      setToast('截图已添加，本地路径将在导出时重试保存')
+    }
+    updateChapter({ screenshots: [...chapter.screenshots, ...storedScreenshots] })
     event.target.value = ''
   }
 
   const updateScreenshot = (id: string, patch: Partial<Chapter['screenshots'][number]>) => {
     if (!chapter) return
     updateChapter({ screenshots: chapter.screenshots.map((item) => item.id === id ? { ...item, ...patch } : item) })
+  }
+
+  const deleteScreenshot = async (screenshot: Screenshot) => {
+    if (!chapter) return
+    const relativePath = screenshot.nativeRelativePath ?? screenshotManagedRelativePath(screenshot)
+    try {
+      await deleteManagedRelativePath(project, chapter, relativePath)
+    } catch {
+      setToast('截图记录已删除，本地托管副本未能清理')
+    }
+    updateChapter({ screenshots: chapter.screenshots.filter((item) => item.id !== screenshot.id) })
   }
 
   const addAttachments = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -523,26 +703,23 @@ export default function App() {
           <div className="brand-mark"><BookOpen size={18} /></div>
           <span className="brand-name">笔记</span>
           <span className="brand-divider" />
-          <div className="project-picker-wrap">
-            <select className="project-picker" value={project.id} onChange={(event) => setActiveProject(event.target.value)}>
-              {data.projects.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-            </select>
-            <ChevronDown size={14} />
-          </div>
+          <CoursePicker
+            projects={data.projects}
+            activeProjectId={project.id}
+            onSelect={setActiveProject}
+            onCreate={() => setNewProjectOpen(true)}
+            onRename={setRenameProjectId}
+            onDelete={setDeleteProjectId}
+          />
         </div>
         <div className="topbar-actions">
           <div className="review-count"><RotateCcw size={15} /><span>今日复习</span><strong>{dueCards}</strong></div>
           <button className="icon-button mobile-only" title="章节信息" disabled={!chapter} onClick={() => setMobileDetailsOpen(true)}><MoreHorizontal size={19} /></button>
           <button className="secondary-button" type="button" title="学习计划" onClick={() => setStudyPlannerOpen(true)}><CalendarClock size={16} /><span className="desktop-action">学习计划</span></button>
           <button className="secondary-button desktop-action" onClick={() => setCatalogOpen(true)}><FileImage size={16} />导入目录</button>
-          <button className="primary-button" onClick={() => {
-            try {
-              exportProject(project)
-              setToast('Markdown 已导出')
-            } catch {
-              setToast('Markdown 导出失败')
-            }
-          }}><Download size={16} /><span className="desktop-action">导出 Markdown</span></button>
+          <button className="primary-button" onClick={() => void exportProject(project)
+            .then(() => setToast('Markdown 已导出，截图使用本地托管路径'))
+            .catch(() => setToast('Markdown 导出失败，截图本地路径无法保存'))}><Download size={16} /><span className="desktop-action">导出 Markdown</span></button>
         </div>
       </header>
 
@@ -659,7 +836,7 @@ export default function App() {
                     <div className="screenshot-image-wrap" onDoubleClick={() => setEditingScreenshot(item)} title="双击编辑截图">
                       <img src={item.dataUrl} alt={item.caption || item.name} />
                       <button className="image-edit" type="button" title="编辑截图" onClick={() => setEditingScreenshot(item)}><Pencil size={15} /></button>
-                      <button className="image-delete" title="删除截图" onClick={() => updateChapter({ screenshots: chapter.screenshots.filter((shot) => shot.id !== item.id) })}><Trash2 size={15} /></button>
+                      <button className="image-delete" title="删除截图" onClick={() => void deleteScreenshot(item)}><Trash2 size={15} /></button>
                     </div>
                     <div className="screenshot-fields">
                       <input aria-label="截图说明" value={item.caption} onChange={(event) => updateScreenshot(item.id, { caption: event.target.value })} placeholder="截图说明" />
@@ -866,7 +1043,30 @@ export default function App() {
       </div>
 
       <CatalogDialog open={catalogOpen} existingChapters={project.chapters} onClose={() => setCatalogOpen(false)} onImport={importCatalog} />
-      <NewProjectDialog open={newProjectOpen} onClose={() => setNewProjectOpen(false)} onCreate={addProject} />
+      <NewProjectDialog
+        open={newProjectOpen}
+        projects={data.projects}
+        onClose={() => setNewProjectOpen(false)}
+        onCreate={addProject}
+        onUseExisting={(projectId) => { setActiveProject(projectId); setToast('已切换到已有课程') }}
+        onReplaceExisting={(projectId, title, duration, unit) => void replaceExistingWithNewProject(projectId, title, duration, unit)}
+      />
+      <RenameProjectDialog
+        open={renameProjectId !== null}
+        project={data.projects.find((item) => item.id === renameProjectId)}
+        projects={data.projects}
+        onClose={() => setRenameProjectId(null)}
+        onRename={(projectId, title) => void renameProject(projectId, title)}
+        onUseExisting={(projectId) => { setActiveProject(projectId); setToast('已切换到已有课程') }}
+        onReplaceExisting={(projectId, existingProjectId, title) => void replaceExistingWithCurrentProject(projectId, existingProjectId, title)}
+      />
+      <DeleteProjectDialog
+        open={deleteProjectId !== null}
+        project={data.projects.find((item) => item.id === deleteProjectId)}
+        busy={projectDeleteBusy}
+        onClose={() => !projectDeleteBusy && setDeleteProjectId(null)}
+        onConfirm={(target) => void deleteProject(target)}
+      />
       <StudyPlannerDialog open={studyPlannerOpen} project={project} onClose={() => setStudyPlannerOpen(false)} onSave={saveStudyPlan} />
       {editingScreenshot && (
         <Suspense fallback={<div className="annotator-loading-screen">正在打开图片编辑器…</div>}>
