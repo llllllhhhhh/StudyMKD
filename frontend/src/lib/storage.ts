@@ -21,6 +21,11 @@ export async function loadData(): Promise<AppData | undefined> {
         studyPlanMinutes: Math.max(1, chapter.studyPlanMinutes ?? 30),
         studyElapsedSeconds: Math.max(0, chapter.studyElapsedSeconds ?? 0),
         studyStartedAt: chapter.studyStartedAt ?? null,
+        studySegments: (chapter.studySegments ?? []).map((segment) => ({
+          start: segment.start,
+          end: segment.end,
+          seconds: Math.max(0, Math.round(segment.seconds ?? 0)),
+        })),
         attachments: (chapter.attachments ?? []).map((attachment) => ({
           ...attachment,
           storageMode: attachment.storageMode ?? 'managed',

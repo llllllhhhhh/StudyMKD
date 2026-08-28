@@ -12,6 +12,7 @@ export function isBlankPlaceholder(chapters: Chapter[]) {
     && !chapter.videoTimestamp
     && !chapter.studyElapsedSeconds
     && !chapter.studyStartedAt
+    && !chapter.studySegments?.length
     && !chapter.tags.length
     && !chapter.flags.length
     && !chapter.screenshots.length

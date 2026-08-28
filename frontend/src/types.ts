@@ -42,6 +42,12 @@ export interface ReviewCard {
   repetitions: number
 }
 
+export interface StudySegment {
+  start: string
+  end: string
+  seconds: number
+}
+
 export interface ChapterAttachment {
   id: string
   name: string
@@ -63,6 +69,7 @@ export interface Chapter {
   studyPlanMinutes: number
   studyElapsedSeconds: number
   studyStartedAt: string | null
+  studySegments: StudySegment[]
   noteHtml: string
   videoTimestamp: string
   tags: string[]

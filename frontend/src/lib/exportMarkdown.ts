@@ -1,7 +1,7 @@
 import saveAs from 'file-saver'
 import TurndownService from 'turndown'
 import type { Chapter, CourseProject, Screenshot } from '../types'
-import { materializeChapterScreenshots, screenshotManagedRelativePath } from './nativeBridge'
+import { materializeChapterScreenshots, nativeBridgeCapabilities, screenshotManagedRelativePath } from './nativeBridge'
 
 const cleanName = (value: string) => value.replace(/[\\/:*?"<>|]/g, '-').trim()
 const cleanLineText = (value: string) => value.replace(/\r?\n/g, ' ').trim()
@@ -46,7 +46,23 @@ function nativePathToFileUri(nativePath: string) {
   return normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`
 }
 
-export function buildProjectMarkdown(project: CourseProject, imageReference: (screenshot: Screenshot, chapterIndex: number, screenshotIndex: number) => string) {
+/**
+ * 探测本地文件夹桥接是否可用。
+ * 只有通过 `npm run dev` 启动（Vite 插件挂载）时才存在；生产静态构建下不可用。
+ */
+export async function detectNativeBridge() {
+  try {
+    const result = await nativeBridgeCapabilities()
+    return Boolean(result.nativeFolderBridge)
+  } catch {
+    return false
+  }
+}
+
+export function buildProjectMarkdown(
+  project: CourseProject,
+  imageReference: (screenshot: Screenshot, chapterIndex: number, screenshotIndex: number) => string,
+) {
   const lines: string[] = [`# ${project.title}`, '', '## 章节目录', '']
 
   project.chapters.forEach((chapter) => {
@@ -84,15 +100,44 @@ async function materializeProjectScreenshots(project: CourseProject) {
   return nativePaths
 }
 
-export async function exportProject(project: CourseProject) {
-  const nativePaths = await materializeProjectScreenshots(project)
+export interface ExportProjectResult {
+  /** 因本地桥接不可用而内嵌到 Markdown 的截图数量 */
+  embeddedScreenshots: number
+  /** 本地桥接是否可用（false 表示当前为生产静态环境） */
+  bridgeAvailable: boolean
+}
+
+/**
+ * 导出整个课程为单个 Markdown 文件。
+ *
+ * 优先把截图同步到 `data/managed` 并引用本机 `file:///` 绝对路径（需要 `npm run dev` 桥接）。
+ * 桥接不可用或同步失败时，回退为把最新批注截图内嵌为 Base64，保证导出的文件自包含，
+ * 并返回 `embeddedScreenshots` 数量供界面提示。
+ */
+export async function exportProject(project: CourseProject): Promise<ExportProjectResult> {
+  const bridgeAvailable = await detectNativeBridge()
+  let nativePaths = new Map<string, string>()
+  if (bridgeAvailable) {
+    try {
+      nativePaths = await materializeProjectScreenshots(project)
+    } catch {
+      // 同步失败时继续使用已有 nativePath 或内嵌回退
+    }
+  }
+
+  let embeddedScreenshots = 0
   const markdown = buildProjectMarkdown(project, (screenshot, chapterIndex) => {
     const chapter = project.chapters[chapterIndex]
     const relativePath = screenshotManagedRelativePath(screenshot)
     const nativePath = nativePaths.get(`${chapter.id}:${relativePath}`) ?? screenshot.nativePath
-    if (!nativePath) throw new Error('截图本地路径不可用')
-    return nativePathToFileUri(nativePath)
+    if (nativePath) return nativePathToFileUri(nativePath)
+    if (screenshot.dataUrl) {
+      embeddedScreenshots += 1
+      return screenshot.dataUrl
+    }
+    throw new Error('截图本地路径不可用且无法内嵌')
   })
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
   saveAs(blob, `${cleanName(project.title) || '学习笔记'}.md`)
+  return { embeddedScreenshots, bridgeAvailable }
 }

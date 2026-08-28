@@ -1,12 +1,17 @@
 import { ChangeEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignLeft,
+  Archive,
+  ArrowDown,
+  ArrowUp,
   BadgeCheck,
+  BarChart3,
   BookOpen,
   CalendarClock,
   Check,
   Circle,
   Clock3,
+  Copy,
   Download,
   Eye,
   File as FileIcon,
@@ -20,6 +25,7 @@ import {
   Lightbulb,
   Menu,
   MoreHorizontal,
+  Move,
   Pause,
   Pencil,
   Play,
@@ -27,6 +33,7 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  Tag,
   Target,
   Trash2,
   X,
@@ -34,19 +41,26 @@ import {
 import CatalogDialog, { type CatalogImportMode } from './components/CatalogDialog'
 import AttachmentViewer from './components/AttachmentViewer'
 import AttachmentImportDialog, { type AttachmentImportKind, type AttachmentStorageMode } from './components/AttachmentImportDialog'
+import BackupDialog from './components/BackupDialog'
 import CoursePicker from './components/CoursePicker'
 import DeleteProjectDialog from './components/DeleteProjectDialog'
+import GlobalSearchDialog from './components/GlobalSearchDialog'
+import MoveChapterDialog from './components/MoveChapterDialog'
 import NewProjectDialog from './components/NewProjectDialog'
 import NoteEditor from './components/NoteEditor'
 import RenameProjectDialog from './components/RenameProjectDialog'
+import ReviewSessionDialog from './components/ReviewSessionDialog'
 import StudyPlannerDialog from './components/StudyPlannerDialog'
+import StudyStatsDialog from './components/StudyStatsDialog'
 import { createChapter, createProject, getInitialData, makeId } from './lib/data'
 import { isBlankPlaceholder, mergeCatalogChapters, removeChapterFromList } from './lib/catalog'
 import { exportProject } from './lib/exportMarkdown'
 import { formatFileSize } from './lib/fileUtils'
 import { deleteManagedAttachment, deleteManagedProject, deleteManagedRelativePath, materializeChapterFiles, materializeChapterScreenshots, renameManagedProject, revealManagedPath, screenshotManagedRelativePath } from './lib/nativeBridge'
 import { findDuplicateProject } from './lib/projectNames'
+import { collectDueCards, scheduleCardDue, type CardRating, type DueCardItem } from './lib/reviewCards'
 import { loadData, saveData } from './lib/storage'
+import { commitStudySegment } from './lib/studyStats'
 import { formatCountdown, formatStudyDuration, getStudyElapsedSeconds } from './lib/studyTimer'
 import { buildStudyForecast, formatPlannerDate } from './lib/studyPlanner'
 import type { AppData, Chapter, ChapterAttachment, CourseProject, ExpectedDurationUnit, HighlightKind, ReviewCard, Screenshot, StudyPlan, StudyStatus } from './types'
@@ -131,6 +145,11 @@ export default function App() {
   const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null)
   const [projectDeleteBusy, setProjectDeleteBusy] = useState(false)
   const [studyPlannerOpen, setStudyPlannerOpen] = useState(false)
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
+  const [backupOpen, setBackupOpen] = useState(false)
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
+  const [moveChapterOpen, setMoveChapterOpen] = useState(false)
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false)
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false)
   const [selectedText, setSelectedText] = useState('')
@@ -142,6 +161,7 @@ export default function App() {
   const [attachmentImportKind, setAttachmentImportKind] = useState<AttachmentImportKind | null>(null)
   const [chapterSearch, setChapterSearch] = useState('')
   const [chapterStatusFilter, setChapterStatusFilter] = useState<ChapterStatusFilter>('all')
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [clockNow, setClockNow] = useState(() => Date.now())
   const screenshotInput = useRef<HTMLInputElement>(null)
   const attachmentInput = useRef<HTMLInputElement>(null)
@@ -173,17 +193,15 @@ export default function App() {
   useEffect(() => {
     setChapterSearch('')
     setChapterStatusFilter('all')
+    setTagFilter(null)
     setStudyPlannerOpen(false)
   }, [data?.activeProjectId])
 
   const project = data?.projects.find((item) => item.id === data.activeProjectId)
   const chapter = project?.chapters.find((item) => item.id === data?.activeChapterId)
 
-  const dueCards = useMemo(() => {
-    if (!data) return 0
-    const now = Date.now()
-    return data.projects.flatMap((item) => item.chapters).flatMap((item) => item.reviewCards).filter((card) => new Date(card.dueAt).getTime() <= now).length
-  }, [data])
+  const dueCardItems = useMemo<DueCardItem[]>(() => data ? collectDueCards(data) : [], [data])
+  const dueCards = dueCardItems.length
 
   const hasRunningTimer = useMemo(() => Boolean(data?.projects.some((item) => (
     item.chapters.some((chapterItem) => chapterItem.status === 'learning' && chapterItem.studyStartedAt)
@@ -192,6 +210,10 @@ export default function App() {
   const savedStudyForecast = useMemo(() => (
     project?.studyPlan ? buildStudyForecast(project, project.studyPlan, clockNow) : undefined
   ), [clockNow, project])
+
+  const projectTags = useMemo(() => (
+    project ? Array.from(new Set(project.chapters.flatMap((item) => item.tags))).sort((left, right) => left.localeCompare(right, 'zh-CN')) : []
+  ), [project])
 
   useEffect(() => {
     if (!hasRunningTimer) return
@@ -598,17 +620,24 @@ export default function App() {
     setToast('已加入今日复习')
   }
 
-  const scheduleCard = (cardId: string, rating: 'again' | 'hard' | 'good') => {
+  const scheduleCard = (cardId: string, rating: CardRating) => {
     if (!chapter) return
-    const days = rating === 'again' ? 0 : rating === 'hard' ? 2 : 5
-    const due = new Date()
-    due.setDate(due.getDate() + days)
-    updateChapter({ reviewCards: chapter.reviewCards.map((card) => card.id === cardId ? {
-      ...card,
-      dueAt: due.toISOString(),
-      intervalDays: days,
-      repetitions: card.repetitions + 1,
-    } : card) })
+    updateChapter({ reviewCards: chapter.reviewCards.map((card) => card.id === cardId ? scheduleCardDue(card, rating) : card) })
+  }
+
+  const rateReviewCard = (projectId: string, chapterId: string, cardId: string, rating: CardRating) => {
+    setData((current) => current ? {
+      ...current,
+      projects: current.projects.map((projectItem) => projectItem.id !== projectId ? projectItem : {
+        ...projectItem,
+        updatedAt: new Date().toISOString(),
+        chapters: projectItem.chapters.map((chapterItem) => chapterItem.id !== chapterId ? chapterItem : {
+          ...chapterItem,
+          updatedAt: new Date().toISOString(),
+          reviewCards: chapterItem.reviewCards.map((card) => card.id === cardId ? scheduleCardDue(card, rating) : card),
+        }),
+      }),
+    } : current)
   }
 
   const startReviewCardEdit = (card: ReviewCard) => {
@@ -638,24 +667,110 @@ export default function App() {
     setToast('复习卡片已删除')
   }
 
+  const moveActiveChapter = (direction: -1 | 1) => {
+    if (!chapter) return
+    const index = project.chapters.findIndex((item) => item.id === chapter.id)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= project.chapters.length) return
+    const chapters = [...project.chapters]
+    const [moving] = chapters.splice(index, 1)
+    chapters.splice(target, 0, moving)
+    mutateProject(project.id, (current) => ({ ...current, chapters, updatedAt: new Date().toISOString() }))
+  }
+
+  const duplicateActiveChapter = () => {
+    if (!chapter) return
+    const copy: Chapter = {
+      ...chapter,
+      id: makeId(),
+      title: `${chapter.title}（副本）`,
+      studyStartedAt: null,
+      updatedAt: new Date().toISOString(),
+      studySegments: (chapter.studySegments ?? []).map((segment) => ({ ...segment })),
+      reviewCards: chapter.reviewCards.map((card) => ({ ...card, id: makeId() })),
+      screenshots: chapter.screenshots.map((screenshot) => ({ ...screenshot, id: makeId() })),
+      attachments: (chapter.attachments ?? []).map((attachment) => ({ ...attachment, id: makeId() })),
+    }
+    const index = project.chapters.findIndex((item) => item.id === chapter.id)
+    mutateProject(project.id, (current) => {
+      const chapters = [...current.chapters]
+      chapters.splice(index + 1, 0, copy)
+      return { ...current, chapters, updatedAt: new Date().toISOString() }
+    })
+    setData((current) => current ? { ...current, activeChapterId: copy.id } : current)
+    setToast('已复制章节')
+  }
+
+  const moveActiveChapterToProject = (targetProjectId: string) => {
+    if (!chapter || targetProjectId === project.id) return
+    const targetProject = data.projects.find((item) => item.id === targetProjectId)
+    const moving: Chapter = {
+      ...chapter,
+      studyStartedAt: null,
+      studySegments: (chapter.studySegments ?? []).map((segment) => ({ ...segment })),
+      screenshots: chapter.screenshots.map((screenshot) => {
+        const { nativePath: _nativePath, nativeRelativePath: _nativeRelativePath, ...rest } = screenshot
+        return rest
+      }),
+      attachments: (chapter.attachments ?? []).map((attachment) => {
+        const { nativePath: _nativePath, ...rest } = attachment
+        return rest
+      }),
+      updatedAt: new Date().toISOString(),
+    }
+    setData((current) => current ? {
+      ...current,
+      projects: current.projects.map((projectItem) => {
+        if (projectItem.id === project.id) {
+          return { ...projectItem, chapters: projectItem.chapters.filter((item) => item.id !== chapter.id), updatedAt: new Date().toISOString() }
+        }
+        if (projectItem.id === targetProjectId) {
+          return { ...projectItem, chapters: [...projectItem.chapters, moving], updatedAt: new Date().toISOString() }
+        }
+        return projectItem
+      }),
+      activeProjectId: targetProjectId,
+      activeChapterId: moving.id,
+    } : current)
+    setToast(`已移动到“${targetProject?.title ?? '目标课程'}”`)
+  }
+
+  const restoreBackup = (restored: AppData, mode: 'replace' | 'merge') => {
+    setData(restored)
+    setBackupOpen(false)
+    setToast(mode === 'replace' ? '已替换为备份中的数据' : '备份中的新课程已导入')
+  }
+
+  const openSearchResult = (projectId: string, chapterId: string) => {
+    setChapterSearch('')
+    setChapterStatusFilter('all')
+    setTagFilter(null)
+    setData({ ...data, activeProjectId: projectId, activeChapterId: chapterId })
+  }
+
   const changeStudyStatus = (status: StudyStatus) => {
     if (!chapter) return
     const now = Date.now()
     const elapsed = getStudyElapsedSeconds(chapter, now)
+    const leavingLearning = chapter.status === 'learning' && status !== 'learning'
+    const committed = leavingLearning ? commitStudySegment(chapter, now) : undefined
     updateChapter({
       status,
       studyElapsedSeconds: elapsed,
       studyStartedAt: status === 'learning'
         ? chapter.studyStartedAt ?? new Date(now).toISOString()
         : null,
+      ...(committed ? { studySegments: committed.segments } : {}),
     })
   }
 
   const pauseStudyTimer = () => {
     if (!chapter?.studyStartedAt) return
+    const committed = commitStudySegment(chapter)
     updateChapter({
       studyElapsedSeconds: getStudyElapsedSeconds(chapter),
       studyStartedAt: null,
+      studySegments: committed.segments,
     })
   }
 
@@ -667,10 +782,11 @@ export default function App() {
   const resetStudyTimer = () => {
     if (!chapter) return
     const elapsed = getStudyElapsedSeconds(chapter)
-    if (elapsed > 0 && !window.confirm('重置当前章节的学习计时？')) return
+    if (elapsed > 0 && !window.confirm('重置当前章节的学习计时？学习历史记录也会一并清除。')) return
     updateChapter({
       studyElapsedSeconds: 0,
       studyStartedAt: chapter.status === 'learning' ? new Date().toISOString() : null,
+      studySegments: [],
     })
   }
 
@@ -680,7 +796,8 @@ export default function App() {
   const visibleChapters = project.chapters.filter((item) => {
     const titleMatches = !normalizedChapterSearch || item.title.toLocaleLowerCase('zh-CN').includes(normalizedChapterSearch)
     const statusMatches = chapterStatusFilter === 'all' || item.status === chapterStatusFilter
-    return titleMatches && statusMatches
+    const tagMatches = !tagFilter || item.tags.includes(tagFilter)
+    return titleMatches && statusMatches && tagMatches
   })
   const courseElapsedSeconds = project.chapters.reduce((total, item) => total + getStudyElapsedSeconds(item, clockNow), 0)
   const chapterElapsedSeconds = chapter ? getStudyElapsedSeconds(chapter, clockNow) : 0
@@ -713,12 +830,17 @@ export default function App() {
           />
         </div>
         <div className="topbar-actions">
-          <div className="review-count"><RotateCcw size={15} /><span>今日复习</span><strong>{dueCards}</strong></div>
+          <button className="review-count" type="button" title="开始今日复习" onClick={() => setReviewOpen(true)}><RotateCcw size={15} /><span>今日复习</span><strong>{dueCards}</strong></button>
+          <button className="icon-button" type="button" title="全局搜索" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /></button>
           <button className="icon-button mobile-only" title="章节信息" disabled={!chapter} onClick={() => setMobileDetailsOpen(true)}><MoreHorizontal size={19} /></button>
           <button className="secondary-button" type="button" title="学习计划" onClick={() => setStudyPlannerOpen(true)}><CalendarClock size={16} /><span className="desktop-action">学习计划</span></button>
+          <button className="secondary-button" type="button" title="学习统计" onClick={() => setStatsOpen(true)}><BarChart3 size={16} /><span className="desktop-action">学习统计</span></button>
+          <button className="secondary-button" type="button" title="数据备份与恢复" onClick={() => setBackupOpen(true)}><Archive size={16} /><span className="desktop-action">备份</span></button>
           <button className="secondary-button desktop-action" onClick={() => setCatalogOpen(true)}><FileImage size={16} />导入目录</button>
           <button className="primary-button" onClick={() => void exportProject(project)
-            .then(() => setToast('Markdown 已导出，截图使用本地托管路径'))
+            .then((result) => setToast(result.embeddedScreenshots > 0
+              ? `Markdown 已导出，${result.embeddedScreenshots} 张截图已内嵌（当前环境无本地桥接）`
+              : 'Markdown 已导出，截图使用本地托管路径'))
             .catch(() => setToast('Markdown 导出失败，截图本地路径无法保存'))}><Download size={16} /><span className="desktop-action">导出 Markdown</span></button>
         </div>
       </header>
@@ -766,6 +888,23 @@ export default function App() {
               </button>
             ))}
           </div>
+          {projectTags.length > 0 && (
+            <div className="chapter-tag-filter" role="group" aria-label="按标签筛选章节">
+              <Tag size={13} />
+              {projectTags.map((tag) => (
+                <button
+                  key={tag}
+                  className={tagFilter === tag ? 'active' : ''}
+                  type="button"
+                  title={`筛选“${tag}”`}
+                  onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
+                >
+                  {tag}
+                </button>
+              ))}
+              {tagFilter && <button className="tag-clear" type="button" title="清除标签筛选" onClick={() => setTagFilter(null)}><X size={12} /></button>}
+            </div>
+          )}
           <nav className="chapter-list" aria-label="课程章节">
             {visibleChapters.map((item) => {
               const StatusIcon = statusMeta[item.status].icon
@@ -797,6 +936,10 @@ export default function App() {
           <div className="outline-actions">
             <button className="secondary-button" onClick={addChapter}><Plus size={16} />章节</button>
             <div className="outline-icon-actions">
+              <button className="icon-button" title="上移章节" disabled={!chapter || chapter === project.chapters[0]} onClick={() => moveActiveChapter(-1)}><ArrowUp size={15} /></button>
+              <button className="icon-button" title="下移章节" disabled={!chapter || chapter === project.chapters[project.chapters.length - 1]} onClick={() => moveActiveChapter(1)}><ArrowDown size={15} /></button>
+              <button className="icon-button" title="复制章节" disabled={!chapter} onClick={duplicateActiveChapter}><Copy size={15} /></button>
+              <button className="icon-button" title="移动到其他课程" disabled={!chapter || data.projects.length < 2} onClick={() => setMoveChapterOpen(true)}><Move size={15} /></button>
               <button className="icon-button danger" title="删除章节" disabled={!chapter} onClick={removeChapter}><Trash2 size={16} /></button>
             </div>
           </div>
@@ -1068,6 +1211,11 @@ export default function App() {
         onConfirm={(target) => void deleteProject(target)}
       />
       <StudyPlannerDialog open={studyPlannerOpen} project={project} onClose={() => setStudyPlannerOpen(false)} onSave={saveStudyPlan} />
+      <ReviewSessionDialog open={reviewOpen} items={dueCardItems} onClose={() => setReviewOpen(false)} onRate={rateReviewCard} />
+      <StudyStatsDialog open={statsOpen} project={project} onClose={() => setStatsOpen(false)} />
+      <BackupDialog open={backupOpen} data={data} onClose={() => setBackupOpen(false)} onRestore={restoreBackup} />
+      <GlobalSearchDialog open={globalSearchOpen} data={data} onClose={() => setGlobalSearchOpen(false)} onOpen={openSearchResult} />
+      <MoveChapterDialog open={moveChapterOpen} chapter={chapter} currentProject={project} projects={data.projects} onClose={() => setMoveChapterOpen(false)} onMove={moveActiveChapterToProject} />
       {editingScreenshot && (
         <Suspense fallback={<div className="annotator-loading-screen">正在打开图片编辑器…</div>}>
           <ImageAnnotator

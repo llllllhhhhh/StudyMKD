@@ -11,6 +11,7 @@ export function createChapter(title: string, level = 1): Chapter {
     studyPlanMinutes: 30,
     studyElapsedSeconds: 0,
     studyStartedAt: null,
+    studySegments: [],
     noteHtml: '',
     videoTimestamp: '',
     tags: [],
