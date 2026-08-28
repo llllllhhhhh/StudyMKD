@@ -1,8 +1,6 @@
 import { ChangeEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignLeft,
-  ArrowLeftFromLine,
-  ArrowRightFromLine,
   BadgeCheck,
   BookOpen,
   CalendarClock,
@@ -39,6 +37,7 @@ import AttachmentViewer from './components/AttachmentViewer'
 import AttachmentImportDialog, { type AttachmentImportKind, type AttachmentStorageMode } from './components/AttachmentImportDialog'
 import NewProjectDialog from './components/NewProjectDialog'
 import NoteEditor from './components/NoteEditor'
+import StudyPlannerDialog from './components/StudyPlannerDialog'
 import { createChapter, createProject, getInitialData, makeId } from './lib/data'
 import { isBlankPlaceholder, mergeCatalogChapters, removeChapterFromList } from './lib/catalog'
 import { exportProject } from './lib/exportMarkdown'
@@ -46,7 +45,8 @@ import { formatFileSize } from './lib/fileUtils'
 import { deleteManagedAttachment, materializeChapterFiles, revealManagedPath } from './lib/nativeBridge'
 import { loadData, saveData } from './lib/storage'
 import { formatCountdown, formatStudyDuration, getStudyElapsedSeconds } from './lib/studyTimer'
-import type { AppData, Chapter, ChapterAttachment, CourseProject, ExpectedDurationUnit, HighlightKind, ReviewCard, Screenshot, StudyStatus } from './types'
+import { buildStudyForecast, formatPlannerDate } from './lib/studyPlanner'
+import type { AppData, Chapter, ChapterAttachment, CourseProject, ExpectedDurationUnit, HighlightKind, ReviewCard, Screenshot, StudyPlan, StudyStatus } from './types'
 
 const ImageAnnotator = lazy(() => import('./components/ImageAnnotator'))
 
@@ -55,6 +55,15 @@ const statusMeta: Record<StudyStatus, { label: string; icon: typeof Circle }> = 
   learning: { label: '学习中', icon: Clock3 },
   completed: { label: '已完成', icon: Check },
 }
+
+type ChapterStatusFilter = 'all' | StudyStatus
+
+const chapterStatusFilters: Array<{ value: ChapterStatusFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'not_started', label: '未开始' },
+  { value: 'learning', label: '学习中' },
+  { value: 'completed', label: '已完成' },
+]
 
 const flagMeta: Record<HighlightKind, { label: string; icon: typeof Target }> = {
   key: { label: '重点', icon: Target },
@@ -86,6 +95,7 @@ export default function App() {
   const [data, setData] = useState<AppData>()
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [studyPlannerOpen, setStudyPlannerOpen] = useState(false)
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false)
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false)
   const [selectedText, setSelectedText] = useState('')
@@ -95,6 +105,8 @@ export default function App() {
   const [editingScreenshot, setEditingScreenshot] = useState<Screenshot>()
   const [attachmentViewerId, setAttachmentViewerId] = useState<string | null>(null)
   const [attachmentImportKind, setAttachmentImportKind] = useState<AttachmentImportKind | null>(null)
+  const [chapterSearch, setChapterSearch] = useState('')
+  const [chapterStatusFilter, setChapterStatusFilter] = useState<ChapterStatusFilter>('all')
   const [clockNow, setClockNow] = useState(() => Date.now())
   const screenshotInput = useRef<HTMLInputElement>(null)
   const attachmentInput = useRef<HTMLInputElement>(null)
@@ -123,6 +135,12 @@ export default function App() {
     setAttachmentViewerId(null)
   }, [data?.activeChapterId])
 
+  useEffect(() => {
+    setChapterSearch('')
+    setChapterStatusFilter('all')
+    setStudyPlannerOpen(false)
+  }, [data?.activeProjectId])
+
   const project = data?.projects.find((item) => item.id === data.activeProjectId)
   const chapter = project?.chapters.find((item) => item.id === data?.activeChapterId)
 
@@ -135,6 +153,10 @@ export default function App() {
   const hasRunningTimer = useMemo(() => Boolean(data?.projects.some((item) => (
     item.chapters.some((chapterItem) => chapterItem.status === 'learning' && chapterItem.studyStartedAt)
   ))), [data])
+
+  const savedStudyForecast = useMemo(() => (
+    project?.studyPlan ? buildStudyForecast(project, project.studyPlan, clockNow) : undefined
+  ), [clockNow, project])
 
   useEffect(() => {
     if (!hasRunningTimer) return
@@ -167,6 +189,7 @@ export default function App() {
   const setActiveProject = (projectId: string) => {
     const next = data.projects.find((item) => item.id === projectId)
     if (!next) return
+    setChapterSearch('')
     setData({ ...data, activeProjectId: projectId, activeChapterId: next.chapters[0]?.id ?? '' })
   }
 
@@ -178,6 +201,17 @@ export default function App() {
   const addProject = (title: string, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
     const next = createProject(title, expectedDurationValue, expectedDurationUnit)
     setData({ projects: [...data.projects, next], activeProjectId: next.id, activeChapterId: next.chapters[0].id })
+  }
+
+  const saveStudyPlan = (plan: StudyPlan, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
+    mutateProject(project.id, (current) => ({
+      ...current,
+      studyPlan: plan,
+      expectedDurationValue,
+      expectedDurationUnit,
+      updatedAt: new Date().toISOString(),
+    }))
+    setToast('学习计划已保存')
   }
 
   const importCatalog = (chapters: Chapter[], sourceImage: string | undefined, mode: CatalogImportMode) => {
@@ -221,11 +255,6 @@ export default function App() {
     setData((current) => current ? { ...current, activeChapterId: result.activeChapterId } : current)
     setMobileDetailsOpen(false)
     setToast(`已删除“${chapter.title}”`)
-  }
-
-  const changeLevel = (delta: number) => {
-    if (!chapter) return
-    updateChapter({ level: Math.max(1, Math.min(3, chapter.level + delta)) })
   }
 
   const addScreenshots = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -467,6 +496,12 @@ export default function App() {
 
   const completed = project.chapters.filter((item) => item.status === 'completed').length
   const progress = project.chapters.length ? Math.round((completed / project.chapters.length) * 100) : 0
+  const normalizedChapterSearch = chapterSearch.trim().toLocaleLowerCase('zh-CN')
+  const visibleChapters = project.chapters.filter((item) => {
+    const titleMatches = !normalizedChapterSearch || item.title.toLocaleLowerCase('zh-CN').includes(normalizedChapterSearch)
+    const statusMatches = chapterStatusFilter === 'all' || item.status === chapterStatusFilter
+    return titleMatches && statusMatches
+  })
   const courseElapsedSeconds = project.chapters.reduce((total, item) => total + getStudyElapsedSeconds(item, clockNow), 0)
   const chapterElapsedSeconds = chapter ? getStudyElapsedSeconds(chapter, clockNow) : 0
   const timerRemainingSeconds = chapter ? (chapter.studyPlanMinutes * 60) - chapterElapsedSeconds : 0
@@ -498,6 +533,7 @@ export default function App() {
         <div className="topbar-actions">
           <div className="review-count"><RotateCcw size={15} /><span>今日复习</span><strong>{dueCards}</strong></div>
           <button className="icon-button mobile-only" title="章节信息" disabled={!chapter} onClick={() => setMobileDetailsOpen(true)}><MoreHorizontal size={19} /></button>
+          <button className="secondary-button" type="button" title="学习计划" onClick={() => setStudyPlannerOpen(true)}><CalendarClock size={16} /><span className="desktop-action">学习计划</span></button>
           <button className="secondary-button desktop-action" onClick={() => setCatalogOpen(true)}><FileImage size={16} />导入目录</button>
           <button className="primary-button" onClick={() => {
             try {
@@ -523,12 +559,38 @@ export default function App() {
             {project.expectedDurationValue && project.expectedDurationUnit && (
               <div className="course-expected-time"><CalendarClock size={13} /><span>预计完成</span><strong>{project.expectedDurationValue} {expectedDurationUnitLabel[project.expectedDurationUnit]}</strong></div>
             )}
+            {project.studyPlan && (
+              <div className="course-forecast-time"><CalendarClock size={13} /><span>动态预测</span><strong>{savedStudyForecast?.completionDate ? formatPlannerDate(savedStudyForecast.completionDate) : '待安排'}</strong></div>
+            )}
             {progress === 100 && project.chapters.length > 0 && (
               <div className="course-total-time"><Clock3 size={13} /><span>总用时</span><strong>{formatStudyDuration(courseElapsedSeconds)}</strong></div>
             )}
           </div>
+          <div className="outline-search" role="search">
+            <Search size={14} />
+            <input
+              aria-label="搜索课程目录"
+              value={chapterSearch}
+              onChange={(event) => setChapterSearch(event.target.value)}
+              placeholder="搜索章节"
+            />
+            {(chapterSearch || chapterStatusFilter !== 'all') && <span>{visibleChapters.length}/{project.chapters.length}</span>}
+            {chapterSearch && <button className="icon-button" type="button" title="清空目录搜索" onClick={() => setChapterSearch('')}><X size={14} /></button>}
+          </div>
+          <div className="chapter-status-filter" role="group" aria-label="筛选章节状态">
+            {chapterStatusFilters.map((filter) => (
+              <button
+                key={filter.value}
+                className={chapterStatusFilter === filter.value ? 'active' : ''}
+                type="button"
+                onClick={() => setChapterStatusFilter(filter.value)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
           <nav className="chapter-list" aria-label="课程章节">
-            {project.chapters.map((item) => {
+            {visibleChapters.map((item) => {
               const StatusIcon = statusMeta[item.status].icon
               return (
                 <button
@@ -551,12 +613,13 @@ export default function App() {
                 </button>
               )
             })}
+            {!visibleChapters.length && (
+              <div className="chapter-search-empty"><Search size={18} /><span>没有符合条件的章节</span></div>
+            )}
           </nav>
           <div className="outline-actions">
             <button className="secondary-button" onClick={addChapter}><Plus size={16} />章节</button>
             <div className="outline-icon-actions">
-              <button className="icon-button" title="提升层级" disabled={!chapter || chapter.level === 1} onClick={() => changeLevel(-1)}><ArrowLeftFromLine size={16} /></button>
-              <button className="icon-button" title="降低层级" disabled={!chapter || chapter.level === 3} onClick={() => changeLevel(1)}><ArrowRightFromLine size={16} /></button>
               <button className="icon-button danger" title="删除章节" disabled={!chapter} onClick={removeChapter}><Trash2 size={16} /></button>
             </div>
           </div>
@@ -804,6 +867,7 @@ export default function App() {
 
       <CatalogDialog open={catalogOpen} existingChapters={project.chapters} onClose={() => setCatalogOpen(false)} onImport={importCatalog} />
       <NewProjectDialog open={newProjectOpen} onClose={() => setNewProjectOpen(false)} onCreate={addProject} />
+      <StudyPlannerDialog open={studyPlannerOpen} project={project} onClose={() => setStudyPlannerOpen(false)} onSave={saveStudyPlan} />
       {editingScreenshot && (
         <Suspense fallback={<div className="annotator-loading-screen">正在打开图片编辑器…</div>}>
           <ImageAnnotator

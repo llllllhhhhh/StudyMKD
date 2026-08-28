@@ -2,6 +2,22 @@ export type StudyStatus = 'not_started' | 'learning' | 'completed'
 export type HighlightKind = 'key' | 'question' | 'review' | 'practice' | 'mastered'
 export type ExpectedDurationUnit = 'day' | 'week' | 'month'
 
+export interface StudyTimeSlot {
+  id: string
+  weekday: number
+  startTime: string
+  endTime: string
+}
+
+export interface StudyPlan {
+  startDate: string
+  focusMinutes: number
+  breakMinutes: number
+  minimumSessionMinutes: number
+  bufferPercent: number
+  weeklySlots: StudyTimeSlot[]
+}
+
 export interface Screenshot {
   id: string
   name: string
@@ -65,6 +81,7 @@ export interface CourseProject {
   title: string
   expectedDurationValue?: number
   expectedDurationUnit?: ExpectedDurationUnit
+  studyPlan?: StudyPlan
   sourceImage?: string
   chapters: Chapter[]
   createdAt: string

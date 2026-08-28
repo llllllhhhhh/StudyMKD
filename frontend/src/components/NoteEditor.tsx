@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Highlight from '@tiptap/extension-highlight'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -7,6 +7,8 @@ import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 import {
   Bold,
+  ChevronDown,
+  ChevronUp,
   Code2,
   Heading2,
   Highlighter,
@@ -16,7 +18,10 @@ import {
   Quote,
   Redo2,
   RotateCcw,
+  Search,
+  X,
 } from 'lucide-react'
+import { findNoteSearchMatches, NoteSearchExtension, noteSearchPluginKey } from '../lib/noteSearch'
 
 const lowlight = createLowlight(common)
 
@@ -48,12 +53,17 @@ interface Props {
 }
 
 export default function NoteEditor({ chapterId, content, onChange, onSelectionChange }: Props) {
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeMatch, setActiveMatch] = useState(0)
+  const searchInput = useRef<HTMLInputElement>(null)
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false }),
       CodeBlockLowlight.configure({ lowlight }),
       Highlight.configure({ multicolor: false }),
       Placeholder.configure({ placeholder: '记录你的理解、结论和问题…' }),
+      NoteSearchExtension,
     ],
     content,
     editorProps: { attributes: { class: 'editor-surface' } },
@@ -68,6 +78,34 @@ export default function NoteEditor({ chapterId, content, onChange, onSelectionCh
     if (!editor) return
     editor.commands.setContent(content, { emitUpdate: false })
   }, [chapterId, editor])
+
+  useEffect(() => {
+    setSearchOpen(false)
+    setSearchQuery('')
+    setActiveMatch(0)
+  }, [chapterId])
+
+  useEffect(() => {
+    if (!searchOpen) return
+    searchInput.current?.focus()
+  }, [searchOpen])
+
+  useEffect(() => {
+    if (!editor) return
+    const query = searchOpen ? searchQuery : ''
+    const matches = findNoteSearchMatches(editor.state.doc, query)
+    const safeIndex = matches.length ? ((activeMatch % matches.length) + matches.length) % matches.length : 0
+    if (safeIndex !== activeMatch) {
+      setActiveMatch(safeIndex)
+      return
+    }
+    editor.view.dispatch(editor.state.tr.setMeta(noteSearchPluginKey, { query, activeIndex: safeIndex }))
+    if (query && matches.length) {
+      window.requestAnimationFrame(() => {
+        editor.view.dom.querySelector('.note-search-current')?.scrollIntoView({ block: 'center', behavior: 'auto' })
+      })
+    }
+  }, [activeMatch, content, editor, searchOpen, searchQuery])
 
   if (!editor) return null
 
@@ -84,12 +122,26 @@ export default function NoteEditor({ chapterId, content, onChange, onSelectionCh
 
   const codeBlockActive = editor.isActive('codeBlock')
   const currentLanguage = codeBlockActive ? editor.getAttributes('codeBlock').language || 'text' : ''
+  const searchMatches = searchOpen ? findNoteSearchMatches(editor.state.doc, searchQuery) : []
+  const searchMatchCount = searchMatches.length
+  const visibleMatchIndex = searchMatchCount ? (activeMatch % searchMatchCount) + 1 : 0
 
   const setCodeLanguage = (language: string) => {
     if (!language) return
     const chain = editor.chain().focus()
     if (!editor.isActive('codeBlock')) chain.toggleCodeBlock()
     chain.updateAttributes('codeBlock', { language: language === 'text' ? null : language }).run()
+  }
+
+  const moveSearch = (direction: number) => {
+    if (!searchMatchCount) return
+    setActiveMatch((current) => (current + direction + searchMatchCount) % searchMatchCount)
+  }
+
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setSearchQuery('')
+    setActiveMatch(0)
   }
 
   return (
@@ -107,7 +159,35 @@ export default function NoteEditor({ chapterId, content, onChange, onSelectionCh
         <span className="toolbar-separator" />
         <button className="icon-button" title="撤销" onClick={() => editor.chain().focus().undo().run()} type="button"><RotateCcw size={17} /></button>
         <button className="icon-button" title="重做" onClick={() => editor.chain().focus().redo().run()} type="button"><Redo2 size={17} /></button>
+        <span className="toolbar-separator" />
+        <button className={`icon-button ${searchOpen ? 'active' : ''}`} title="搜索笔记内容" onClick={() => searchOpen ? closeSearch() : setSearchOpen(true)} type="button"><Search size={17} /></button>
       </div>
+      {searchOpen && (
+        <div className="note-search-bar" role="search">
+          <Search size={15} />
+          <input
+            ref={searchInput}
+            aria-label="搜索笔记内容"
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value)
+              setActiveMatch(0)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') closeSearch()
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                moveSearch(event.shiftKey ? -1 : 1)
+              }
+            }}
+            placeholder="输入笔记关键词"
+          />
+          <span className="note-search-count">{visibleMatchIndex}/{searchMatchCount}</span>
+          <button className="icon-button" type="button" title="上一个匹配" disabled={!searchMatchCount} onClick={() => moveSearch(-1)}><ChevronUp size={15} /></button>
+          <button className="icon-button" type="button" title="下一个匹配" disabled={!searchMatchCount} onClick={() => moveSearch(1)}><ChevronDown size={15} /></button>
+          <button className="icon-button" type="button" title="关闭搜索" onClick={closeSearch}><X size={15} /></button>
+        </div>
+      )}
       <EditorContent editor={editor} />
     </div>
   )

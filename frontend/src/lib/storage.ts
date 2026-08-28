@@ -1,5 +1,6 @@
 import { get, set } from 'idb-keyval'
 import type { AppData } from '../types'
+import { normalizeStudyPlan } from './studyPlanner'
 
 const STORAGE_KEY = 'keji-app-data-v1'
 
@@ -14,6 +15,7 @@ export async function loadData(): Promise<AppData | undefined> {
         ? project.expectedDurationValue
         : undefined,
       expectedDurationUnit: project.expectedDurationUnit ?? undefined,
+      studyPlan: project.studyPlan ? normalizeStudyPlan(project.studyPlan) : undefined,
       chapters: project.chapters.map((chapter) => ({
         ...chapter,
         studyPlanMinutes: Math.max(1, chapter.studyPlanMinutes ?? 30),
