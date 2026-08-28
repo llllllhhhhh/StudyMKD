@@ -5,6 +5,7 @@ import {
   ArrowRightFromLine,
   BadgeCheck,
   BookOpen,
+  CalendarClock,
   Check,
   ChevronDown,
   Circle,
@@ -45,7 +46,7 @@ import { formatFileSize } from './lib/fileUtils'
 import { deleteManagedAttachment, materializeChapterFiles, revealManagedPath } from './lib/nativeBridge'
 import { loadData, saveData } from './lib/storage'
 import { formatCountdown, formatStudyDuration, getStudyElapsedSeconds } from './lib/studyTimer'
-import type { AppData, Chapter, ChapterAttachment, CourseProject, HighlightKind, ReviewCard, Screenshot, StudyStatus } from './types'
+import type { AppData, Chapter, ChapterAttachment, CourseProject, ExpectedDurationUnit, HighlightKind, ReviewCard, Screenshot, StudyStatus } from './types'
 
 const ImageAnnotator = lazy(() => import('./components/ImageAnnotator'))
 
@@ -61,6 +62,12 @@ const flagMeta: Record<HighlightKind, { label: string; icon: typeof Target }> = 
   review: { label: '待复习', icon: RotateCcw },
   practice: { label: '可实践', icon: Lightbulb },
   mastered: { label: '已掌握', icon: BadgeCheck },
+}
+
+const expectedDurationUnitLabel: Record<ExpectedDurationUnit, string> = {
+  day: '天',
+  week: '周',
+  month: '月',
 }
 
 const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
@@ -168,8 +175,8 @@ export default function App() {
     setMobileOutlineOpen(false)
   }
 
-  const addProject = (title: string) => {
-    const next = createProject(title)
+  const addProject = (title: string, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
+    const next = createProject(title, expectedDurationValue, expectedDurationUnit)
     setData({ projects: [...data.projects, next], activeProjectId: next.id, activeChapterId: next.chapters[0].id })
   }
 
@@ -513,6 +520,9 @@ export default function App() {
           <div className="course-progress">
             <div className="progress-copy"><span>{completed}/{project.chapters.length} 节</span><strong>{progress}%</strong></div>
             <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+            {project.expectedDurationValue && project.expectedDurationUnit && (
+              <div className="course-expected-time"><CalendarClock size={13} /><span>预计完成</span><strong>{project.expectedDurationValue} {expectedDurationUnitLabel[project.expectedDurationUnit]}</strong></div>
+            )}
             {progress === 100 && project.chapters.length > 0 && (
               <div className="course-total-time"><Clock3 size={13} /><span>总用时</span><strong>{formatStudyDuration(courseElapsedSeconds)}</strong></div>
             )}

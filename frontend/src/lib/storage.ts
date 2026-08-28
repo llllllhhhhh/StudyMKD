@@ -10,6 +10,10 @@ export async function loadData(): Promise<AppData | undefined> {
     ...data,
     projects: data.projects.map((project) => ({
       ...project,
+      expectedDurationValue: project.expectedDurationValue && project.expectedDurationValue > 0
+        ? project.expectedDurationValue
+        : undefined,
+      expectedDurationUnit: project.expectedDurationUnit ?? undefined,
       chapters: project.chapters.map((chapter) => ({
         ...chapter,
         studyPlanMinutes: Math.max(1, chapter.studyPlanMinutes ?? 30),

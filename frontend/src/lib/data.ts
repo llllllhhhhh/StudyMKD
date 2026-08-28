@@ -1,4 +1,4 @@
-import type { AppData, Chapter, CourseProject } from '../types'
+import type { AppData, Chapter, CourseProject, ExpectedDurationUnit } from '../types'
 
 export const makeId = () => crypto.randomUUID()
 
@@ -23,12 +23,14 @@ export function createChapter(title: string, level = 1): Chapter {
   }
 }
 
-export function createProject(title: string): CourseProject {
+export function createProject(title: string, expectedDurationValue?: number, expectedDurationUnit?: ExpectedDurationUnit): CourseProject {
   const chapter = createChapter('开始学习', 1)
   const now = new Date().toISOString()
   return {
     id: makeId(),
     title,
+    expectedDurationValue,
+    expectedDurationUnit,
     chapters: [chapter],
     createdAt: now,
     updatedAt: now,

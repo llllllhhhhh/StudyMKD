@@ -72,6 +72,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .course-total-time { min-height: 28px; margin-top: 9px; padding-top: 8px; border-top: 1px solid #e4e7e3; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
 .course-total-time svg { color: var(--teal); }
 .course-total-time strong { margin-left: auto; color: var(--teal-dark); font-size: 11px; font-weight: 650; }
+.course-expected-time { min-height: 24px; margin-top: 7px; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.course-expected-time svg { color: #a66b19; }
+.course-expected-time strong { margin-left: auto; color: #6d5940; font-size: 11px; font-weight: 650; }
 .chapter-list { flex: 1; overflow-y: auto; padding: 10px 8px; }
 .chapter-row { width: 100%; height: 38px; border: 0; background: transparent; display: flex; align-items: center; gap: 9px; border-radius: var(--radius); color: #58625d; cursor: pointer; overflow: hidden; text-align: left; }
 .chapter-row:hover { background: #f0f2ee; color: var(--ink); }
@@ -313,7 +316,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .image-preview { padding: 0; border-style: solid; }
 .image-preview img { width: 100%; height: 100%; object-fit: contain; }
 .catalog-text-pane { display: flex; flex-direction: column; min-width: 0; }
-.catalog-text-pane label, .field-label { color: #56615c; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.catalog-text-pane label, .field-label { display: block; color: #56615c; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .catalog-text-pane textarea { flex: 1; min-height: 280px; resize: none; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; line-height: 1.7; }
 .catalog-text-pane textarea:focus { border-color: var(--teal); }
 .field-meta { margin: 7px 0 0; color: var(--quiet); font-size: 10px; }
@@ -343,6 +346,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .compact-modal .modal-footer { padding: 18px 0 0; border-top: 0; }
 .text-input { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: var(--radius); }
 .text-input:focus { border-color: var(--teal); }
+.compact-modal .text-input + .field-label { margin-top: 18px; }
+.duration-field { width: 100%; height: 42px; padding: 0 9px 0 11px; display: grid; grid-template-columns: 18px minmax(0, 1fr) 82px; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--quiet); background: #fff; }
+.duration-field:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(36, 107, 103, .08); }
+.duration-field input, .duration-field select { min-width: 0; height: 34px; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 12px; }
+.duration-field input { width: 100%; font-weight: 600; }
+.duration-field select { padding: 0 4px; border-left: 1px solid var(--line); cursor: pointer; }
 .toast { position: fixed; left: 50%; bottom: 24px; z-index: 80; transform: translateX(-50%); min-height: 38px; padding: 0 14px; display: flex; align-items: center; gap: 8px; border-radius: var(--radius); background: #23302a; color: #fff; box-shadow: 0 8px 30px rgba(20,30,25,.18); font-size: 12px; }
 .annotator-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; grid-template-rows: 58px auto minmax(0, 1fr) 58px; background: #f2f3f0; }
 .annotator-loading-screen { position: fixed; inset: 0; z-index: 89; display: grid; place-items: center; color: var(--muted); background: #f2f3f0; font-size: 12px; }

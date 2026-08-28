@@ -1,5 +1,6 @@
 export type StudyStatus = 'not_started' | 'learning' | 'completed'
 export type HighlightKind = 'key' | 'question' | 'review' | 'practice' | 'mastered'
+export type ExpectedDurationUnit = 'day' | 'week' | 'month'
 
 export interface Screenshot {
   id: string
@@ -62,6 +63,8 @@ export interface Chapter {
 export interface CourseProject {
   id: string
   title: string
+  expectedDurationValue?: number
+  expectedDurationUnit?: ExpectedDurationUnit
   sourceImage?: string
   chapters: Chapter[]
   createdAt: string
