@@ -50,7 +50,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   z-index: 20;
 }
 .brand-group, .topbar-actions, .review-count { display: flex; align-items: center; }
-.brand-group { min-width: 0; flex: 1; gap: 10px; overflow: hidden; }
+.brand-group { min-width: 0; flex: 1; gap: 10px; overflow: visible; }
 .brand-mark { width: 30px; height: 30px; display: grid; place-items: center; color: #fff; background: var(--teal); border-radius: var(--radius); }
 .brand-name { font: 600 17px 'IBM Plex Sans SC', 'Noto Sans SC', sans-serif; white-space: nowrap; }
 .brand-divider { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }

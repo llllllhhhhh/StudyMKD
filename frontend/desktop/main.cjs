@@ -349,10 +349,15 @@ function registerIpc() {
     BrowserWindow.fromWebContents(event.sender)?.close()
     return true
   })
-  ipcMain.handle('studymkd:show-main-window', () => {
+  ipcMain.handle('studymkd:show-main-window', (event) => {
+    const sourceWindow = BrowserWindow.fromWebContents(event.sender)
+    if (sourceWindow === focusWindow && !sourceWindow.isDestroyed()) sourceWindow.close()
     if (!mainWindow || mainWindow.isDestroyed()) createMainWindow()
-    mainWindow.show()
-    mainWindow.focus()
+    else {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    }
     return true
   })
   ipcMain.on('studymkd:broadcast-data-changed', (event, message) => {

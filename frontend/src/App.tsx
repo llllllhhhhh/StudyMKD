@@ -412,6 +412,21 @@ export default function App() {
     window.open(url, 'StudyMKDFocus', 'width=440,height=720')
   }
 
+  const returnToMainWindow = () => {
+    if (window.studyMKDDesktop) {
+      void window.studyMKDDesktop.showMainWindow()
+      return
+    }
+    if (window.opener) {
+      window.opener.focus()
+      window.close()
+      return
+    }
+    const url = new URL(window.location.href)
+    url.search = ''
+    window.location.replace(url.toString())
+  }
+
   const toggleAlwaysOnTop = async () => {
     if (!window.studyMKDDesktop) return
     const result = await window.studyMKDDesktop.setAlwaysOnTop(!alwaysOnTop)
@@ -994,7 +1009,7 @@ export default function App() {
         onPrevious={() => chapterIndex > 0 && setActiveChapter(project.chapters[chapterIndex - 1].id)}
         onNext={() => chapterIndex < project.chapters.length - 1 && setActiveChapter(project.chapters[chapterIndex + 1].id)}
         onToggleAlwaysOnTop={() => void toggleAlwaysOnTop()}
-        onShowMain={() => window.studyMKDDesktop ? void window.studyMKDDesktop.showMainWindow() : window.opener?.focus()}
+        onShowMain={returnToMainWindow}
         onCollapse={() => window.studyMKDDesktop && void window.studyMKDDesktop.collapseFocusWindow()}
         onExpand={() => window.studyMKDDesktop && void window.studyMKDDesktop.expandFocusWindow()}
         onClose={() => window.studyMKDDesktop ? void window.studyMKDDesktop.closeCurrentWindow() : window.close()}
