@@ -9,6 +9,8 @@ import {
   BookOpen,
   CalendarClock,
   Check,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Clock3,
   Copy,
@@ -27,6 +29,7 @@ import {
   MoreHorizontal,
   Move,
   Pause,
+  PanelRightOpen,
   Pencil,
   Play,
   Plus,
@@ -45,6 +48,7 @@ import BackupDialog from './components/BackupDialog'
 import CoursePicker from './components/CoursePicker'
 import DeleteProjectDialog from './components/DeleteProjectDialog'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
+import FocusNoteView from './components/FocusNoteView'
 import MoveChapterDialog from './components/MoveChapterDialog'
 import NewProjectDialog from './components/NewProjectDialog'
 import NoteEditor from './components/NoteEditor'
@@ -63,9 +67,14 @@ import { loadData, saveData } from './lib/storage'
 import { commitStudySegment } from './lib/studyStats'
 import { formatCountdown, formatStudyDuration, getStudyElapsedSeconds } from './lib/studyTimer'
 import { buildStudyForecast, formatPlannerDate } from './lib/studyPlanner'
+import { acquireEditorLock, currentEditorLock, getWindowId, releaseEditorLock, subscribeDataChanged, subscribeEditorLock, type EditorLock } from './lib/windowSync'
 import type { AppData, Chapter, ChapterAttachment, CourseProject, ExpectedDurationUnit, HighlightKind, ReviewCard, Screenshot, StudyPlan, StudyStatus } from './types'
 
 const ImageAnnotator = lazy(() => import('./components/ImageAnnotator'))
+const pageParams = new URLSearchParams(window.location.search)
+const focusMode = pageParams.get('focus') === '1'
+const requestedFocusProjectId = pageParams.get('projectId') ?? ''
+const requestedFocusChapterId = pageParams.get('chapterId') ?? ''
 
 const statusMeta: Record<StudyStatus, { label: string; icon: typeof Circle }> = {
   not_started: { label: '未开始', icon: Circle },
@@ -106,6 +115,21 @@ const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 function formatUpdated(value: string) {
   const date = new Date(value)
   return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+function updateNoteScreenshotHtml(noteHtml: string, screenshotId: string, dataUrl?: string) {
+  const documentNode = new DOMParser().parseFromString(noteHtml, 'text/html')
+  documentNode.querySelectorAll<HTMLImageElement>('img[data-screenshot-id]').forEach((image) => {
+    if (image.dataset.screenshotId !== screenshotId) return
+    if (dataUrl) {
+      image.src = dataUrl
+      return
+    }
+    const parent = image.parentElement
+    image.remove()
+    if (parent?.tagName === 'P' && !parent.textContent?.trim() && !parent.children.length) parent.remove()
+  })
+  return documentNode.body.innerHTML
 }
 
 function hasNativeProjectCopies(project: CourseProject) {
@@ -163,21 +187,102 @@ export default function App() {
   const [chapterStatusFilter, setChapterStatusFilter] = useState<ChapterStatusFilter>('all')
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [clockNow, setClockNow] = useState(() => Date.now())
+  const [editorLock, setEditorLock] = useState<EditorLock>()
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false)
+  const [focusCollapsed, setFocusCollapsed] = useState(false)
+  const [screenshotsExpanded, setScreenshotsExpanded] = useState(true)
+  const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
+  const suppressNextSave = useRef(false)
   const screenshotInput = useRef<HTMLInputElement>(null)
   const attachmentInput = useRef<HTMLInputElement>(null)
   const folderInput = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
-    loadData().then((saved) => setData(saved ?? getInitialData()))
+    loadData().then((saved) => {
+      const next = saved ?? getInitialData()
+      if (focusMode && requestedFocusProjectId) {
+        const project = next.projects.find((item) => item.id === requestedFocusProjectId)
+        if (project) {
+          next.activeProjectId = project.id
+          next.activeChapterId = project.chapters.some((item) => item.id === requestedFocusChapterId)
+            ? requestedFocusChapterId
+            : project.chapters[0]?.id ?? ''
+        }
+      }
+      setData(next)
+    })
   }, [])
 
   useEffect(() => {
     if (!data) return
+    if (suppressNextSave.current) {
+      suppressNextSave.current = false
+      return
+    }
     const timer = window.setTimeout(() => {
       void saveData(data).catch(() => setToast('本地存储空间不足，文件未能保存'))
     }, 350)
     return () => window.clearTimeout(timer)
   }, [data])
+
+  useEffect(() => subscribeDataChanged((message) => {
+    const sync = message as { type?: string; projectId?: string; chapterId?: string; alwaysOnTop?: boolean; collapsed?: boolean }
+    if (sync?.type === 'window-state' && focusMode) {
+      setAlwaysOnTop(Boolean(sync.alwaysOnTop))
+      setFocusCollapsed(Boolean(sync.collapsed))
+      return
+    }
+    if (sync?.type === 'focus-context' && focusMode) {
+      void loadData().then((saved) => {
+        if (!saved) return
+        const targetProject = saved.projects.find((item) => item.id === sync.projectId)
+        if (!targetProject) return
+        suppressNextSave.current = true
+        setData({
+          ...saved,
+          activeProjectId: targetProject.id,
+          activeChapterId: targetProject.chapters.some((item) => item.id === sync.chapterId)
+            ? sync.chapterId ?? ''
+            : targetProject.chapters[0]?.id ?? '',
+        })
+      })
+      return
+    }
+    if (sync?.type !== 'data-changed') return
+    void loadData().then((saved) => {
+      if (!saved) return
+      suppressNextSave.current = true
+      setData(saved)
+    })
+  }), [])
+
+  useEffect(() => subscribeEditorLock(setEditorLock), [])
+
+  useEffect(() => {
+    if (!focusMode || !data?.activeProjectId || !data.activeChapterId) return
+    acquireEditorLock(data.activeProjectId, data.activeChapterId)
+    const timer = window.setInterval(() => acquireEditorLock(data.activeProjectId, data.activeChapterId), 1500)
+    window.addEventListener('beforeunload', releaseEditorLock)
+    window.addEventListener('pagehide', releaseEditorLock)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('beforeunload', releaseEditorLock)
+      window.removeEventListener('pagehide', releaseEditorLock)
+      releaseEditorLock()
+    }
+  }, [data?.activeChapterId, data?.activeProjectId])
+
+  useEffect(() => {
+    if (!window.studyMKDDesktop || !focusMode) return
+    void window.studyMKDDesktop.getWindowState().then((state) => {
+      setAlwaysOnTop(state.alwaysOnTop)
+      setFocusCollapsed(state.collapsed)
+    })
+  }, [])
+
+  useEffect(() => {
+    document.title = focusMode ? 'StudyMKD · 专注笔记' : window.studyMKDDesktop ? 'StudyMKD' : '笔记 · 视频学习'
+  }, [])
 
   useEffect(() => {
     if (!toast) return
@@ -199,6 +304,13 @@ export default function App() {
 
   const project = data?.projects.find((item) => item.id === data.activeProjectId)
   const chapter = project?.chapters.find((item) => item.id === data?.activeChapterId)
+  const chapterLockedByFocus = Boolean(
+    !focusMode
+    && editorLock
+    && editorLock.ownerId !== getWindowId()
+    && editorLock.projectId === project?.id
+    && editorLock.chapterId === chapter?.id,
+  )
 
   const dueCardItems = useMemo<DueCardItem[]>(() => data ? collectDueCards(data) : [], [data])
   const dueCards = dueCardItems.length
@@ -287,6 +399,23 @@ export default function App() {
   const setActiveChapter = (chapterId: string) => {
     setData({ ...data, activeChapterId: chapterId })
     setMobileOutlineOpen(false)
+  }
+
+  const openFocusWindow = async () => {
+    if (!project || !chapter) return
+    if (window.studyMKDDesktop) {
+      await window.studyMKDDesktop.openFocusWindow({ projectId: project.id, chapterId: chapter.id })
+      return
+    }
+    const url = new URL(window.location.href)
+    url.search = new URLSearchParams({ focus: '1', projectId: project.id, chapterId: chapter.id }).toString()
+    window.open(url, 'StudyMKDFocus', 'width=440,height=720')
+  }
+
+  const toggleAlwaysOnTop = async () => {
+    if (!window.studyMKDDesktop) return
+    const result = await window.studyMKDDesktop.setAlwaysOnTop(!alwaysOnTop)
+    setAlwaysOnTop(result.alwaysOnTop)
   }
 
   const addProject = (title: string, expectedDurationValue: number, expectedDurationUnit: ExpectedDurationUnit) => {
@@ -437,17 +566,17 @@ export default function App() {
     setToast(`已删除“${chapter.title}”`)
   }
 
-  const addScreenshots = async (event: ChangeEvent<HTMLInputElement>) => {
+  const createScreenshots = async (files: File[], noteLinked = false) => {
     if (!chapter) return
-    const files = Array.from(event.target.files ?? [])
-    if (!files.length) return
+    if (!files.length) return []
     const screenshots: Screenshot[] = await Promise.all(files.map(async (file) => ({
       id: makeId(),
-      name: file.name,
+      name: file.name || `粘贴图片-${new Date().toLocaleString('zh-CN').replace(/[\s/:]/g, '-')}.png`,
       dataUrl: await fileToDataUrl(file),
       caption: '',
       timestamp: chapter.videoTimestamp,
       createdAt: new Date().toISOString(),
+      noteLinked,
     })))
     let storedScreenshots = screenshots
     try {
@@ -460,13 +589,37 @@ export default function App() {
     } catch {
       setToast('截图已添加，本地路径将在导出时重试保存')
     }
-    updateChapter({ screenshots: [...chapter.screenshots, ...storedScreenshots] })
+    const now = new Date().toISOString()
+    mutateProject(project.id, (current) => ({
+      ...current,
+      updatedAt: now,
+      chapters: current.chapters.map((item) => item.id === chapter.id
+        ? { ...item, screenshots: [...item.screenshots, ...storedScreenshots], updatedAt: now }
+        : item),
+    }))
+    return storedScreenshots
+  }
+
+  const addScreenshots = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    await createScreenshots(files)
     event.target.value = ''
+  }
+
+  const pasteImageIntoNote = async (file: File) => {
+    const screenshots = await createScreenshots([file], true)
+    const screenshot = screenshots?.[0]
+    if (!screenshot) throw new Error('当前章节不存在')
+    setToast('图片已加入视频截图，并插入笔记')
+    return screenshot
   }
 
   const updateScreenshot = (id: string, patch: Partial<Chapter['screenshots'][number]>) => {
     if (!chapter) return
-    updateChapter({ screenshots: chapter.screenshots.map((item) => item.id === id ? { ...item, ...patch } : item) })
+    updateChapter({
+      screenshots: chapter.screenshots.map((item) => item.id === id ? { ...item, ...patch } : item),
+      ...(patch.dataUrl ? { noteHtml: updateNoteScreenshotHtml(chapter.noteHtml, id, patch.dataUrl) } : {}),
+    })
   }
 
   const deleteScreenshot = async (screenshot: Screenshot) => {
@@ -477,7 +630,10 @@ export default function App() {
     } catch {
       setToast('截图记录已删除，本地托管副本未能清理')
     }
-    updateChapter({ screenshots: chapter.screenshots.filter((item) => item.id !== screenshot.id) })
+    updateChapter({
+      screenshots: chapter.screenshots.filter((item) => item.id !== screenshot.id),
+      noteHtml: updateNoteScreenshotHtml(chapter.noteHtml, screenshot.id),
+    })
   }
 
   const addAttachments = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -812,11 +968,56 @@ export default function App() {
         ? '已暂停'
         : '待开始'
 
+  if (focusMode && chapter) {
+    const chapterIndex = project.chapters.findIndex((item) => item.id === chapter.id)
+    return (
+      <>
+      <FocusNoteView
+        projectTitle={project.title}
+        chapter={chapter}
+        chapterIndex={chapterIndex}
+        chapterCount={project.chapters.length}
+        timerRemainingSeconds={timerRemainingSeconds}
+        elapsedSeconds={chapterElapsedSeconds}
+        timerRunning={timerRunning}
+        alwaysOnTop={alwaysOnTop}
+        collapsed={focusCollapsed}
+        desktop={Boolean(window.studyMKDDesktop)}
+        onPasteImage={pasteImageIntoNote}
+        onOpenScreenshot={(screenshotId) => {
+          const screenshot = chapter.screenshots.find((item) => item.id === screenshotId)
+          if (screenshot) setEditingScreenshot(screenshot)
+        }}
+        onNoteChange={(noteHtml) => updateChapter({ noteHtml })}
+        onVideoTimestampChange={(videoTimestamp) => updateChapter({ videoTimestamp })}
+        onToggleTimer={timerRunning ? pauseStudyTimer : resumeStudyTimer}
+        onPrevious={() => chapterIndex > 0 && setActiveChapter(project.chapters[chapterIndex - 1].id)}
+        onNext={() => chapterIndex < project.chapters.length - 1 && setActiveChapter(project.chapters[chapterIndex + 1].id)}
+        onToggleAlwaysOnTop={() => void toggleAlwaysOnTop()}
+        onShowMain={() => window.studyMKDDesktop ? void window.studyMKDDesktop.showMainWindow() : window.opener?.focus()}
+        onCollapse={() => window.studyMKDDesktop && void window.studyMKDDesktop.collapseFocusWindow()}
+        onExpand={() => window.studyMKDDesktop && void window.studyMKDDesktop.expandFocusWindow()}
+        onClose={() => window.studyMKDDesktop ? void window.studyMKDDesktop.closeCurrentWindow() : window.close()}
+      />
+      {editingScreenshot && (
+        <Suspense fallback={<div className="annotator-loading-screen">正在打开图片编辑器…</div>}>
+          <ImageAnnotator
+            screenshot={editingScreenshot}
+            onClose={() => setEditingScreenshot(undefined)}
+            onSave={(patch) => updateScreenshot(editingScreenshot.id, patch)}
+          />
+        </Suspense>
+      )}
+      {toast && <div className="toast"><Check size={16} />{toast}</div>}
+      </>
+    )
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-group">
-          <button className="icon-button mobile-only" title="课程目录" onClick={() => setMobileOutlineOpen(true)}><Menu size={19} /></button>
+          <button className="icon-button mobile-only outline-toggle" title="课程目录" onClick={() => setMobileOutlineOpen(true)}><Menu size={19} /></button>
           <div className="brand-mark"><BookOpen size={18} /></div>
           <span className="brand-name">笔记</span>
           <span className="brand-divider" />
@@ -832,11 +1033,12 @@ export default function App() {
         <div className="topbar-actions">
           <button className="review-count" type="button" title="开始今日复习" onClick={() => setReviewOpen(true)}><RotateCcw size={15} /><span>今日复习</span><strong>{dueCards}</strong></button>
           <button className="icon-button" type="button" title="全局搜索" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /></button>
-          <button className="icon-button mobile-only" title="章节信息" disabled={!chapter} onClick={() => setMobileDetailsOpen(true)}><MoreHorizontal size={19} /></button>
+          <button className="icon-button" type="button" title="专注笔记小窗" disabled={!chapter} onClick={() => void openFocusWindow()}><PanelRightOpen size={17} /></button>
+          <button className="icon-button mobile-only details-toggle" title="章节信息" disabled={!chapter} onClick={() => setMobileDetailsOpen(true)}><MoreHorizontal size={19} /></button>
           <button className="secondary-button" type="button" title="学习计划" onClick={() => setStudyPlannerOpen(true)}><CalendarClock size={16} /><span className="desktop-action">学习计划</span></button>
           <button className="secondary-button" type="button" title="学习统计" onClick={() => setStatsOpen(true)}><BarChart3 size={16} /><span className="desktop-action">学习统计</span></button>
           <button className="secondary-button" type="button" title="数据备份与恢复" onClick={() => setBackupOpen(true)}><Archive size={16} /><span className="desktop-action">备份</span></button>
-          <button className="secondary-button desktop-action" onClick={() => setCatalogOpen(true)}><FileImage size={16} />导入目录</button>
+          <button className="secondary-button" type="button" title="导入目录" onClick={() => setCatalogOpen(true)}><FileImage size={16} /><span className="desktop-action">导入目录</span></button>
           <button className="primary-button" onClick={() => void exportProject(project)
             .then((result) => setToast(result.embeddedScreenshots > 0
               ? `Markdown 已导出，${result.embeddedScreenshots} 张截图已内嵌（当前环境无本地桥接）`
@@ -963,16 +1165,40 @@ export default function App() {
               <div><p className="eyebrow">学习记录</p><h3>我的笔记</h3></div>
               <button className="secondary-button" type="button" onClick={addReviewCard}><Sparkles size={16} />制成卡片</button>
             </div>
-            <NoteEditor chapterId={chapter.id} content={chapter.noteHtml} onChange={(noteHtml) => updateChapter({ noteHtml })} onSelectionChange={setSelectedText} />
+            {chapterLockedByFocus && <div className="editor-lock-notice"><PanelRightOpen size={15} /><span>本章节正在专注小窗中编辑，主窗口暂时只读。</span></div>}
+            <NoteEditor
+              chapterId={chapter.id}
+              content={chapter.noteHtml}
+              editable={!chapterLockedByFocus}
+              onPasteImage={pasteImageIntoNote}
+              onOpenScreenshot={(screenshotId) => {
+                const screenshot = chapter.screenshots.find((item) => item.id === screenshotId)
+                if (screenshot) setEditingScreenshot(screenshot)
+              }}
+              onChange={(noteHtml) => updateChapter({ noteHtml })}
+              onSelectionChange={setSelectedText}
+            />
           </section>
 
-          <section className="content-section screenshot-section">
+          <section className={`content-section screenshot-section ${screenshotsExpanded ? '' : 'section-collapsed'}`}>
             <div className="section-title-row">
               <div><p className="eyebrow">画面证据</p><h3>视频截图</h3></div>
-              <input ref={screenshotInput} type="file" accept="image/*" multiple hidden onChange={addScreenshots} />
-              <button className="secondary-button" type="button" onClick={() => screenshotInput.current?.click()}><ImagePlus size={16} />添加截图</button>
+              <div className="section-title-actions">
+                <input ref={screenshotInput} type="file" accept="image/*" multiple hidden onChange={addScreenshots} />
+                <button className="secondary-button" type="button" onClick={() => screenshotInput.current?.click()}><ImagePlus size={16} />添加截图</button>
+                <button
+                  className="icon-button section-toggle"
+                  type="button"
+                  title={screenshotsExpanded ? '收起视频截图' : '展开视频截图'}
+                  aria-label={screenshotsExpanded ? '收起视频截图' : '展开视频截图'}
+                  aria-expanded={screenshotsExpanded}
+                  onClick={() => setScreenshotsExpanded((value) => !value)}
+                >
+                  {screenshotsExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                </button>
+              </div>
             </div>
-            {chapter.screenshots.length ? (
+            {screenshotsExpanded && (chapter.screenshots.length ? (
               <div className="screenshot-grid">
                 {chapter.screenshots.map((item) => (
                   <article className="screenshot-item" key={item.id}>
@@ -1001,10 +1227,10 @@ export default function App() {
               </div>
             ) : (
               <button className="empty-screenshots" onClick={() => screenshotInput.current?.click()}><ImagePlus size={24} /><span>暂无截图</span></button>
-            )}
+            ))}
           </section>
 
-          <section className="content-section attachment-section">
+          <section className={`content-section attachment-section ${attachmentsExpanded ? '' : 'section-collapsed'}`}>
             <div className="section-title-row attachment-heading">
               <div>
                 <p className="eyebrow">章节资料</p>
@@ -1026,9 +1252,19 @@ export default function App() {
                 {!!chapter.attachments?.length && <button className="secondary-button" type="button" onClick={() => setAttachmentViewerId(chapter.attachments[0].id)}><FolderOpen size={16} />打开文件/项目</button>}
                 <button className="secondary-button" type="button" onClick={() => setAttachmentImportKind('files')}><Files size={16} />导入文件</button>
                 <button className="secondary-button" type="button" onClick={() => setAttachmentImportKind('folder')}><FolderUp size={16} />导入文件夹</button>
+                <button
+                  className="icon-button section-toggle"
+                  type="button"
+                  title={attachmentsExpanded ? '收起文件与项目' : '展开文件与项目'}
+                  aria-label={attachmentsExpanded ? '收起文件与项目' : '展开文件与项目'}
+                  aria-expanded={attachmentsExpanded}
+                  onClick={() => setAttachmentsExpanded((value) => !value)}
+                >
+                  {attachmentsExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                </button>
               </div>
             </div>
-            {chapter.attachments?.length ? (
+            {attachmentsExpanded && (chapter.attachments?.length ? (
               <div className="attachment-list">
                 {chapter.attachments.map((attachment) => (
                   <div className="attachment-row" key={attachment.id}>
@@ -1045,7 +1281,7 @@ export default function App() {
               </div>
             ) : (
               <div className="empty-attachments"><FileIcon size={20} /><span>暂无章节文件</span></div>
-            )}
+            ))}
           </section>
 
           <section className="content-section reflection-section">
@@ -1077,7 +1313,7 @@ export default function App() {
           {chapter ? <>
           <div className="panel-heading">
             <div><p className="eyebrow">当前章节</p><h2>学习信息</h2></div>
-            <button className="icon-button mobile-only" title="关闭" onClick={() => setMobileDetailsOpen(false)}><X size={18} /></button>
+            <button className="icon-button mobile-only details-close" title="关闭" onClick={() => setMobileDetailsOpen(false)}><X size={18} /></button>
           </div>
 
           <section className="detail-section">

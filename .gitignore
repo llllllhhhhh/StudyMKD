@@ -1,6 +1,8 @@
 frontend/node_modules/
 frontend/node_modules.incomplete/
 frontend/dist/
+frontend/release/
+frontend/release-next/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts

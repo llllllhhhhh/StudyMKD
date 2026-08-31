@@ -50,6 +50,34 @@
 - 章节回顾、学习信息、复习卡片和章节附件不会加入导出文件
 - 粗体、斜体、重点标记、列表、引用和带语言代码块使用统一 Markdown 语法
 - 响应式桌面和移动端布局
+- Electron Windows 桌面版，支持独立专注笔记小窗、始终置顶和主/小窗实时同步
+- 专注小窗同章节编辑锁，防止两个窗口同时保存造成内容覆盖
+
+## Windows 桌面版
+
+已经生成的安装程序位于 `frontend/release/StudyMKD-0.1.0-Setup.exe`。安装后不需要 Node.js、npm 或浏览器。
+
+桌面版数据位置：
+
+- 课程、笔记等 IndexedDB 数据：`%APPDATA%/StudyMKD/`
+- 托管截图与章节文件：`Documents/StudyMKD/data/managed/`
+
+浏览器版和桌面版使用不同的本地存储空间。迁移已有课程时，先在浏览器版点击“备份”导出 JSON，再在桌面版“备份”中导入。
+
+开发桌面版：
+
+```powershell
+cd frontend
+npm install
+npm run desktop:dev
+```
+
+构建未安装版与 Windows 安装程序：
+
+```powershell
+npm run desktop:pack
+npm run desktop:build
+```
 
 ## 运行前端
 
@@ -82,9 +110,9 @@ cmake --build build --config Release
 
 ## 数据与隐私
 
-浏览器版本的数据保存在当前浏览器的 IndexedDB 中；截图与笔记不会自动上传。目录 OCR 的中文与英文模型随项目在本地提供。
+浏览器版本的数据保存在当前浏览器的 IndexedDB 中；桌面版数据保存在 Electron 的本地用户目录。截图与笔记不会自动上传，目录 OCR 的中文与英文模型随应用在本地提供。
 
 章节文件有两种存储方式：
 
 - `项目托管目录`：复制文件内容到 IndexedDB，原文件移动后仍可预览和导出。
-- `链接原文件`：只保存浏览器文件句柄，不复制内容；预览和导出读取原文件。原文件移动、删除或权限失效后链接不可用。此模式需要支持 File System Access API 的浏览器；C++ 桌面版将进一步支持资源管理器定位绝对路径。
+- `链接原文件`：只保存文件句柄，不复制内容；预览和导出读取原文件。原文件移动、删除或权限失效后链接不可用。此模式需要 File System Access API 支持。

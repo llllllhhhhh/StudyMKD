@@ -28,6 +28,7 @@ function screenshotExtension(dataUrl: string) {
 }
 
 async function nativeRequest<T>(path: string, body?: unknown) {
+  if (window.studyMKDDesktop) return window.studyMKDDesktop.nativeRequest<T>(path, body)
   const response = await fetch(`/api/native/${path}`, body === undefined ? undefined : {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -7,7 +7,11 @@ const cleanName = (value: string) => value.replace(/[\\/:*?"<>|]/g, '-').trim()
 const cleanLineText = (value: string) => value.replace(/\r?\n/g, ' ').trim()
 const escapeAltText = (value: string) => cleanLineText(value).replace(/[\\[\]]/g, '\\$&')
 
-function noteMarkdown(chapter: Chapter) {
+function noteMarkdown(
+  chapter: Chapter,
+  imageReference: (screenshot: Screenshot, chapterIndex: number, screenshotIndex: number) => string,
+  chapterIndex: number,
+) {
   const headingLevel = Math.min(chapter.level + 3, 6)
   const turndown = new TurndownService({
     headingStyle: 'atx',
@@ -35,6 +39,19 @@ function noteMarkdown(chapter: Chapter) {
       const longestBackticks = Math.max(0, ...(text.match(/`+/g) ?? []).map((match) => match.length))
       const fence = '`'.repeat(Math.max(3, longestBackticks + 1))
       return `\n\n${fence}${language}\n${text}\n${fence}\n\n`
+    },
+  })
+  turndown.addRule('linkedScreenshot', {
+    filter: (node) => node.nodeName === 'IMG' && Boolean((node as HTMLElement).dataset.screenshotId),
+    replacement: (_content, node) => {
+      const image = node as HTMLImageElement
+      const screenshotIndex = chapter.screenshots.findIndex((item) => item.id === image.dataset.screenshotId)
+      const screenshot = chapter.screenshots[screenshotIndex]
+      const alt = escapeAltText(screenshot?.caption || image.alt || screenshot?.name || '视频截图')
+      const reference = screenshot
+        ? imageReference(screenshot, chapterIndex, screenshotIndex)
+        : image.src
+      return reference ? `\n\n![${alt}](<${reference}>)\n\n` : ''
     },
   })
 
@@ -74,11 +91,13 @@ export function buildProjectMarkdown(
     const sectionHeading = '#'.repeat(Math.min(chapter.level + 2, 6))
     lines.push('', `${'#'.repeat(chapterHeadingLevel)} ${cleanLineText(chapter.title)}`, '')
 
-    const notes = noteMarkdown(chapter)
+    const notes = noteMarkdown(chapter, imageReference, chapterIndex)
     if (notes) lines.push(`${sectionHeading} 笔记内容`, '', notes)
 
-    if (chapter.screenshots.length) lines.push('', `${sectionHeading} 视频截图`, '')
-    chapter.screenshots.forEach((screenshot, screenshotIndex) => {
+    const standaloneScreenshots = chapter.screenshots.filter((screenshot) => !screenshot.noteLinked)
+    if (standaloneScreenshots.length) lines.push('', `${sectionHeading} 视频截图`, '')
+    standaloneScreenshots.forEach((screenshot) => {
+      const screenshotIndex = chapter.screenshots.findIndex((item) => item.id === screenshot.id)
       const alt = escapeAltText(screenshot.caption || screenshot.name || `视频截图 ${screenshotIndex + 1}`)
       lines.push(`![${alt}](<${imageReference(screenshot, chapterIndex, screenshotIndex)}>)`)
       if (screenshot.timestamp) lines.push('', `**视频位置：** ${cleanLineText(screenshot.timestamp)}`)

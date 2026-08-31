@@ -31,6 +31,7 @@ export interface Screenshot {
   originalDataUrl?: string
   nativePath?: string
   nativeRelativePath?: string
+  noteLinked?: boolean
 }
 
 export interface ReviewCard {

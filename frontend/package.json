@@ -1,23 +1,40 @@
 {
   "name": "keji-video-study-notes",
+  "productName": "StudyMKD",
+  "description": "本地优先的视频学习笔记与学习计划工具",
+  "author": "StudyMKD",
   "private": true,
   "version": "0.1.0",
+  "main": "desktop/main.cjs",
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/copy-tessdata.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "lint": "tsc -b --pretty false"
+    "lint": "tsc -b --pretty false",
+    "desktop:dev": "concurrently --kill-others \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron desktop/main.cjs --dev\"",
+    "desktop:pack": "npm run build && electron-builder --dir",
+    "desktop:build": "npm run build && electron-builder --win nsis"
   },
-  "dependencies": {
+  "devDependencies": {
     "@tesseract.js-data/chi_sim": "^1.0.0",
     "@tesseract.js-data/eng": "^1.0.0",
     "@tiptap/extension-code-block-lowlight": "^3.30.5",
     "@tiptap/extension-highlight": "^3.4.2",
+    "@tiptap/extension-image": "^3.30.5",
     "@tiptap/extension-placeholder": "^3.4.2",
     "@tiptap/react": "^3.4.2",
     "@tiptap/starter-kit": "^3.4.2",
+    "@types/file-saver": "^2.0.7",
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/turndown": "^5.0.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^10.0.5",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "fabric": "^7.4.0",
     "file-saver": "^2.0.5",
     "highlight.js": "^11.11.1",
@@ -27,16 +44,36 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tesseract.js": "^6.0.1",
-    "turndown": "^7.2.0"
-  },
-  "devDependencies": {
-    "@types/file-saver": "^2.0.7",
-    "@types/node": "^22.20.1",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
-    "@types/turndown": "^5.0.5",
-    "@vitejs/plugin-react": "^4.3.4",
+    "turndown": "^7.2.0",
     "typescript": "~5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.studymkd.desktop",
+    "productName": "StudyMKD",
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "StudyMKD-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

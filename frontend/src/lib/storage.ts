@@ -1,6 +1,7 @@
 import { get, set } from 'idb-keyval'
 import type { AppData } from '../types'
 import { normalizeStudyPlan } from './studyPlanner'
+import { notifyDataChanged } from './windowSync'
 
 const STORAGE_KEY = 'keji-app-data-v1'
 
@@ -37,4 +38,5 @@ export async function loadData(): Promise<AppData | undefined> {
 
 export async function saveData(data: AppData): Promise<void> {
   await set(STORAGE_KEY, data)
+  notifyDataChanged()
 }

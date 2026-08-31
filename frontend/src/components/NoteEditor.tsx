@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import Highlight from '@tiptap/extension-highlight'
+import Image from '@tiptap/extension-image'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Placeholder from '@tiptap/extension-placeholder'
+import type { Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
@@ -22,6 +24,20 @@ import {
   X,
 } from 'lucide-react'
 import { findNoteSearchMatches, NoteSearchExtension, noteSearchPluginKey } from '../lib/noteSearch'
+import type { Screenshot } from '../types'
+
+const ScreenshotImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      screenshotId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-screenshot-id'),
+        renderHTML: (attributes) => attributes.screenshotId ? { 'data-screenshot-id': attributes.screenshotId } : {},
+      },
+    }
+  },
+}).configure({ inline: false, allowBase64: true })
 
 const lowlight = createLowlight(common)
 
@@ -48,36 +64,75 @@ const CODE_LANGUAGES = [
 interface Props {
   chapterId: string
   content: string
+  editable?: boolean
+  onPasteImage?: (file: File) => Promise<Screenshot>
+  onOpenScreenshot?: (screenshotId: string) => void
   onChange: (html: string) => void
   onSelectionChange: (text: string) => void
 }
 
-export default function NoteEditor({ chapterId, content, onChange, onSelectionChange }: Props) {
+export default function NoteEditor({ chapterId, content, editable = true, onPasteImage, onOpenScreenshot, onChange, onSelectionChange }: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeMatch, setActiveMatch] = useState(0)
   const searchInput = useRef<HTMLInputElement>(null)
+  const editorRef = useRef<Editor | null>(null)
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false }),
       CodeBlockLowlight.configure({ lowlight }),
       Highlight.configure({ multicolor: false }),
       Placeholder.configure({ placeholder: '记录你的理解、结论和问题…' }),
+      ScreenshotImage,
       NoteSearchExtension,
     ],
     content,
-    editorProps: { attributes: { class: 'editor-surface' } },
+    editable,
+    editorProps: {
+      attributes: { class: 'editor-surface' },
+      handlePaste: (_view, event) => {
+        if (!editable || !onPasteImage) return false
+        const imageItem = Array.from(event.clipboardData?.items ?? []).find((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        const file = imageItem?.getAsFile()
+        if (!file) return false
+        event.preventDefault()
+        void onPasteImage(file).then((screenshot) => {
+          editorRef.current?.chain().focus().insertContent({
+            type: 'image',
+            attrs: {
+              src: screenshot.dataUrl,
+              alt: screenshot.name,
+              screenshotId: screenshot.id,
+            },
+          }).run()
+        })
+        return true
+      },
+      handleClick: (_view, _position, event) => {
+        const target = event.target as HTMLElement
+        if (!(target instanceof HTMLImageElement)) return false
+        const screenshotId = target.dataset.screenshotId
+        if (!screenshotId) return false
+        onOpenScreenshot?.(screenshotId)
+        return true
+      },
+    },
     onUpdate: ({ editor: currentEditor }) => onChange(currentEditor.getHTML()),
     onSelectionUpdate: ({ editor: currentEditor }) => {
       const { from, to } = currentEditor.state.selection
       onSelectionChange(currentEditor.state.doc.textBetween(from, to, ' ').trim())
     },
   })
+  editorRef.current = editor
 
   useEffect(() => {
     if (!editor) return
-    editor.commands.setContent(content, { emitUpdate: false })
-  }, [chapterId, editor])
+    if (editor.getHTML() !== content) editor.commands.setContent(content, { emitUpdate: false })
+  }, [chapterId, content, editor])
+
+  useEffect(() => {
+    editor?.setEditable(editable)
+  }, [editable, editor])
 
   useEffect(() => {
     setSearchOpen(false)
@@ -145,20 +200,20 @@ export default function NoteEditor({ chapterId, content, onChange, onSelectionCh
   }
 
   return (
-    <div className="editor-shell">
+    <div className={`editor-shell ${editable ? '' : 'editor-readonly'}`}>
       <div className="editor-toolbar">
         {tools.map(({ title, icon: Icon, active, run }) => (
-          <button key={title} className={`icon-button ${active ? 'active' : ''}`} title={title} onClick={run} type="button">
+          <button key={title} className={`icon-button ${active ? 'active' : ''}`} title={title} onClick={run} type="button" disabled={!editable}>
             <Icon size={17} />
           </button>
         ))}
-        <select className="code-language-select" aria-label="代码语言" title="选择代码语言" value={currentLanguage} onChange={(event) => setCodeLanguage(event.target.value)}>
+        <select className="code-language-select" aria-label="代码语言" title="选择代码语言" value={currentLanguage} onChange={(event) => setCodeLanguage(event.target.value)} disabled={!editable}>
           <option value="" disabled>代码语言</option>
           {CODE_LANGUAGES.map((language) => <option key={language.value} value={language.value}>{language.label}</option>)}
         </select>
         <span className="toolbar-separator" />
-        <button className="icon-button" title="撤销" onClick={() => editor.chain().focus().undo().run()} type="button"><RotateCcw size={17} /></button>
-        <button className="icon-button" title="重做" onClick={() => editor.chain().focus().redo().run()} type="button"><Redo2 size={17} /></button>
+        <button className="icon-button" title="撤销" onClick={() => editor.chain().focus().undo().run()} type="button" disabled={!editable}><RotateCcw size={17} /></button>
+        <button className="icon-button" title="重做" onClick={() => editor.chain().focus().redo().run()} type="button" disabled={!editable}><Redo2 size={17} /></button>
         <span className="toolbar-separator" />
         <button className={`icon-button ${searchOpen ? 'active' : ''}`} title="搜索笔记内容" onClick={() => searchOpen ? closeSearch() : setSearchOpen(true)} type="button"><Search size={17} /></button>
       </div>
