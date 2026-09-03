@@ -2,7 +2,9 @@ interface StudyMKDDesktopApi {
   isDesktop: true
   platform: string
   nativeRequest<T>(path: string, body?: unknown): Promise<T>
+  openExternalUrl(url: string): Promise<boolean>
   openFocusWindow(context: { projectId: string; chapterId: string }): Promise<{ opened: boolean; reused: boolean }>
+  openReviewWindow(context: { projectId: string; chapterId: string }): Promise<{ opened: boolean; reused: boolean }>
   setAlwaysOnTop(value: boolean): Promise<{ alwaysOnTop: boolean }>
   collapseFocusWindow(): Promise<{ collapsed: boolean }>
   expandFocusWindow(): Promise<{ collapsed: boolean }>

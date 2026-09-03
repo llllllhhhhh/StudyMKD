@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  AlignLeft,
   ArrowUpRight,
   Check,
+  Clock3,
   Eraser,
+  Link2,
   MousePointer2,
   PaintbrushVertical,
   Pencil,
@@ -22,13 +25,14 @@ import {
   type TPointerEventInfo,
 } from 'fabric'
 import type { Screenshot } from '../types'
+import { normalizeOnlineUrl, openOnlineUrl } from '../lib/onlineUrl'
 
 type Tool = 'select' | 'draw' | 'arrow' | 'text' | 'erase'
 
 interface Props {
   screenshot: Screenshot
   onClose: () => void
-  onSave: (patch: Pick<Screenshot, 'dataUrl' | 'annotationJson' | 'annotationWidth' | 'annotationHeight' | 'originalDataUrl'>) => void
+  onSave: (patch: Pick<Screenshot, 'dataUrl' | 'annotationJson' | 'annotationWidth' | 'annotationHeight' | 'originalDataUrl' | 'caption' | 'timestamp' | 'url'>) => void
 }
 
 const COLORS = ['#e5483f', '#f2b233', '#246b67', '#2674c8', '#222825', '#ffffff']
@@ -44,6 +48,9 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
   const [tool, setTool] = useState<Tool>('select')
   const [color, setColor] = useState('#e5483f')
   const [strokeWidth, setStrokeWidth] = useState(5)
+  const [caption, setCaption] = useState(screenshot.caption)
+  const [timestamp, setTimestamp] = useState(screenshot.timestamp)
+  const [onlineUrl, setOnlineUrl] = useState(screenshot.url ?? '')
   const [ready, setReady] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
   const [, forceHistoryRender] = useState(0)
@@ -79,7 +86,7 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
       const originalWidth = image.naturalWidth || 1280
       const originalHeight = image.naturalHeight || 720
       const maxWidth = Math.max(300, Math.min(1200, window.innerWidth - 96))
-      const maxHeight = Math.max(260, Math.min(720, window.innerHeight - 190))
+      const maxHeight = Math.max(260, Math.min(720, window.innerHeight - 250))
       const scale = Math.min(1, maxWidth / originalWidth, maxHeight / originalHeight)
       const width = Math.round(originalWidth * scale)
       const height = Math.round(originalHeight * scale)
@@ -138,6 +145,12 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
       canvas.dispose()
       fabricCanvas.current = undefined
     }
+  }, [screenshot.id])
+
+  useEffect(() => {
+    setCaption(screenshot.caption)
+    setTimestamp(screenshot.timestamp)
+    setOnlineUrl(screenshot.url ?? '')
   }, [screenshot.id])
 
   useEffect(() => {
@@ -283,6 +296,9 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
       annotationWidth: canvas.width,
       annotationHeight: canvas.height,
       originalDataUrl: screenshot.originalDataUrl || screenshot.dataUrl,
+      caption: caption.trim(),
+      timestamp: timestamp.trim(),
+      url: normalizedUrl || undefined,
     })
     onClose()
   }
@@ -294,11 +310,13 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
     { id: 'text', label: '文字', icon: Type },
     { id: 'erase', label: '橡皮擦', icon: Eraser },
   ]
+  const normalizedUrl = normalizeOnlineUrl(onlineUrl)
+  const linkInvalid = Boolean(onlineUrl.trim()) && normalizedUrl === undefined
 
   return (
     <div className="annotator-backdrop" role="dialog" aria-modal="true" aria-label="编辑截图">
       <header className="annotator-header">
-        <div><p className="eyebrow">截图批注</p><h2>{screenshot.caption || screenshot.name}</h2></div>
+        <div><p className="eyebrow">截图批注</p><h2>{caption || screenshot.name}</h2></div>
         <button className="icon-button" type="button" title="关闭编辑器" onClick={onClose}><X size={19} /></button>
       </header>
       <div className="annotator-toolbar">
@@ -316,6 +334,24 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
         <button className="icon-button" type="button" title="重做" disabled={historyIndex.current >= history.current.length - 1} onClick={() => void restoreHistory(1)}><Redo2 size={17} /></button>
         <button className="icon-button" type="button" title="清空全部批注" onClick={clearAnnotations}><PaintbrushVertical size={17} /></button>
       </div>
+      <div className="annotator-metadata">
+        <label className="annotator-meta-field description">
+          <AlignLeft size={15} />
+          <span>描述</span>
+          <input value={caption} maxLength={240} onChange={(event) => setCaption(event.target.value)} placeholder="截图说明" />
+        </label>
+        <label className="annotator-meta-field timestamp">
+          <Clock3 size={15} />
+          <span>时间</span>
+          <input value={timestamp} maxLength={12} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setTimestamp(event.target.value)} placeholder="00:00" />
+        </label>
+        <div className={`annotator-meta-field link ${linkInvalid ? 'invalid' : ''}`}>
+          <Link2 size={15} />
+          <span>线上地址</span>
+          <input aria-label="截图线上地址" value={onlineUrl} onChange={(event) => setOnlineUrl(event.target.value)} placeholder="https://example.com" />
+          <button className="icon-button" type="button" title="打开线上地址" disabled={!normalizedUrl} onClick={() => normalizedUrl && void openOnlineUrl(normalizedUrl)}><ArrowUpRight size={15} /></button>
+        </div>
+      </div>
       <main className="annotator-stage">
         {!ready && <div className="annotator-loading"><RotateCcw className="spin" size={20} />正在打开图片</div>}
         <div className="annotator-canvas-stack" style={{ width: canvasSize.width || undefined, height: canvasSize.height || undefined }}>
@@ -325,7 +361,7 @@ export default function ImageAnnotator({ screenshot, onClose, onSave }: Props) {
       </main>
       <footer className="annotator-footer">
         <button className="text-button" type="button" onClick={onClose}>取消</button>
-        <button className="primary-button" type="button" disabled={!ready} onClick={() => void save()}><Check size={16} />保存批注</button>
+        <button className="primary-button" type="button" disabled={!ready || linkInvalid} onClick={() => void save()}><Check size={16} />保存批注</button>
       </footer>
     </div>
   )

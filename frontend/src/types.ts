@@ -24,6 +24,7 @@ export interface Screenshot {
   dataUrl: string
   caption: string
   timestamp: string
+  url?: string
   createdAt: string
   annotationJson?: string
   annotationWidth?: number
@@ -38,6 +39,8 @@ export interface ReviewCard {
   id: string
   question: string
   answer: string
+  sourceExcerpt?: string
+  tags?: string[]
   dueAt: string
   intervalDays: number
   repetitions: number

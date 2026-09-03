@@ -58,8 +58,8 @@ export interface StudyStats {
   weekSeconds: number
   monthSeconds: number
   totalSeconds: number
-  /** 最近 84 天（12 周），按日期升序，0 表示无记录 */
-  daily: Array<{ date: string; seconds: number }>
+  /** 当前周及之前 11 个完整周，周一到周日排列；当前周未来日期标记为 future */
+  daily: Array<{ date: string; seconds: number; future: boolean }>
   chapters: ChapterStudyStat[]
 }
 
@@ -94,12 +94,15 @@ export function buildStudyStats(project: CourseProject, now = Date.now()): Study
   })
 
   const dailyMap = studySecondsByDate(project.chapters.flatMap((chapter) => chapter.studySegments ?? []))
-  const daily: Array<{ date: string; seconds: number }> = []
-  for (let offset = 83; offset >= 0; offset -= 1) {
-    const date = new Date(today)
-    date.setDate(today.getDate() - offset)
+  const daily: StudyStats['daily'] = []
+  const heatmapStart = new Date(weekStart)
+  heatmapStart.setDate(weekStart.getDate() - (11 * 7))
+  for (let offset = 0; offset < 84; offset += 1) {
+    const date = new Date(heatmapStart)
+    date.setDate(heatmapStart.getDate() + offset)
     const key = localDateString(date)
-    daily.push({ date: key, seconds: dailyMap.get(key) ?? 0 })
+    const future = date > today
+    daily.push({ date: key, seconds: future ? 0 : dailyMap.get(key) ?? 0, future })
   }
 
   const inRange = (date: Date, start: Date, end: Date) => date >= start && date < end

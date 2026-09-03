@@ -18,6 +18,7 @@ const MAX_FILE_BYTES = 250 * 1024 * 1024
 
 let mainWindow
 let focusWindow
+let reviewWindow
 let focusWindowCollapsed = false
 let focusWindowExpandedBounds
 let focusAnimation
@@ -250,6 +251,35 @@ async function openFocusWindow(context = {}) {
   return { opened: true, reused: false }
 }
 
+async function openReviewWindow(context = {}) {
+  if (reviewWindow && !reviewWindow.isDestroyed()) {
+    await reviewWindow.loadURL(rendererUrl({
+      review: '1',
+      projectId: context.projectId || '',
+      chapterId: context.chapterId || '',
+    }))
+    reviewWindow.show()
+    reviewWindow.focus()
+    return { opened: true, reused: true }
+  }
+  reviewWindow = new BrowserWindow(browserOptions({
+    title: 'StudyMKD · 专注复习',
+    width: 620,
+    height: 760,
+    minWidth: 480,
+    minHeight: 580,
+    frame: false,
+    backgroundColor: '#f5f6f3',
+  }))
+  await loadRenderer(reviewWindow, {
+    review: '1',
+    projectId: context.projectId || '',
+    chapterId: context.chapterId || '',
+  })
+  reviewWindow.on('closed', () => { reviewWindow = undefined })
+  return { opened: true, reused: false }
+}
+
 function sendFocusWindowState(collapsed = focusWindowCollapsed) {
   if (!focusWindow || focusWindow.isDestroyed()) return
   focusWindow.webContents.send('studymkd:data-sync', {
@@ -331,7 +361,14 @@ async function expandFocusWindow() {
 
 function registerIpc() {
   ipcMain.handle('studymkd:native-request', (_event, requestPath, body) => nativeRequest(requestPath, body))
+  ipcMain.handle('studymkd:open-external-url', async (_event, value) => {
+    const url = new URL(String(value || ''))
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('仅支持 HTTP 或 HTTPS 地址')
+    await shell.openExternal(url.toString())
+    return true
+  })
   ipcMain.handle('studymkd:open-focus-window', (_event, context) => openFocusWindow(context))
+  ipcMain.handle('studymkd:open-review-window', (_event, context) => openReviewWindow(context))
   ipcMain.handle('studymkd:set-always-on-top', (event, value) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     window?.setAlwaysOnTop(Boolean(value), 'floating')
@@ -351,7 +388,7 @@ function registerIpc() {
   })
   ipcMain.handle('studymkd:show-main-window', (event) => {
     const sourceWindow = BrowserWindow.fromWebContents(event.sender)
-    if (sourceWindow === focusWindow && !sourceWindow.isDestroyed()) sourceWindow.close()
+    if ((sourceWindow === focusWindow || sourceWindow === reviewWindow) && !sourceWindow.isDestroyed()) sourceWindow.close()
     if (!mainWindow || mainWindow.isDestroyed()) createMainWindow()
     else {
       if (mainWindow.isMinimized()) mainWindow.restore()

@@ -16,6 +16,7 @@ import {
   Copy,
   Download,
   Eye,
+  ExternalLink,
   File as FileIcon,
   FileImage,
   Files,
@@ -25,6 +26,7 @@ import {
   HelpCircle,
   ImagePlus,
   Lightbulb,
+  Link2,
   Menu,
   MoreHorizontal,
   Move,
@@ -45,10 +47,12 @@ import CatalogDialog, { type CatalogImportMode } from './components/CatalogDialo
 import AttachmentViewer from './components/AttachmentViewer'
 import AttachmentImportDialog, { type AttachmentImportKind, type AttachmentStorageMode } from './components/AttachmentImportDialog'
 import BackupDialog from './components/BackupDialog'
+import CardImportDialog, { type CardImportMode } from './components/CardImportDialog'
 import CoursePicker from './components/CoursePicker'
 import DeleteProjectDialog from './components/DeleteProjectDialog'
 import GlobalSearchDialog from './components/GlobalSearchDialog'
 import FocusNoteView from './components/FocusNoteView'
+import FocusReviewView from './components/FocusReviewView'
 import MoveChapterDialog from './components/MoveChapterDialog'
 import NewProjectDialog from './components/NewProjectDialog'
 import NoteEditor from './components/NoteEditor'
@@ -58,9 +62,11 @@ import StudyPlannerDialog from './components/StudyPlannerDialog'
 import StudyStatsDialog from './components/StudyStatsDialog'
 import { createChapter, createProject, getInitialData, makeId } from './lib/data'
 import { isBlankPlaceholder, mergeCatalogChapters, removeChapterFromList } from './lib/catalog'
+import type { GeneratedCardDraft } from './lib/cardExchange'
 import { exportProject } from './lib/exportMarkdown'
 import { formatFileSize } from './lib/fileUtils'
 import { deleteManagedAttachment, deleteManagedProject, deleteManagedRelativePath, materializeChapterFiles, materializeChapterScreenshots, renameManagedProject, revealManagedPath, screenshotManagedRelativePath } from './lib/nativeBridge'
+import { openOnlineUrl } from './lib/onlineUrl'
 import { findDuplicateProject } from './lib/projectNames'
 import { collectDueCards, scheduleCardDue, type CardRating, type DueCardItem } from './lib/reviewCards'
 import { loadData, saveData } from './lib/storage'
@@ -73,8 +79,11 @@ import type { AppData, Chapter, ChapterAttachment, CourseProject, ExpectedDurati
 const ImageAnnotator = lazy(() => import('./components/ImageAnnotator'))
 const pageParams = new URLSearchParams(window.location.search)
 const focusMode = pageParams.get('focus') === '1'
+const reviewMode = pageParams.get('review') === '1'
+const auxiliaryMode = focusMode || reviewMode
 const requestedFocusProjectId = pageParams.get('projectId') ?? ''
 const requestedFocusChapterId = pageParams.get('chapterId') ?? ''
+const REVIEW_CARD_PREVIEW_LIMIT = 2
 
 const statusMeta: Record<StudyStatus, { label: string; icon: typeof Circle }> = {
   not_started: { label: '未开始', icon: Circle },
@@ -174,12 +183,13 @@ export default function App() {
   const [backupOpen, setBackupOpen] = useState(false)
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [moveChapterOpen, setMoveChapterOpen] = useState(false)
+  const [cardImportOpen, setCardImportOpen] = useState(false)
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false)
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false)
-  const [selectedText, setSelectedText] = useState('')
   const [toast, setToast] = useState('')
   const [editingCardId, setEditingCardId] = useState('')
   const [cardDraft, setCardDraft] = useState({ question: '', answer: '' })
+  const [selectedReviewCardIds, setSelectedReviewCardIds] = useState<Set<string>>(new Set())
   const [editingScreenshot, setEditingScreenshot] = useState<Screenshot>()
   const [attachmentViewerId, setAttachmentViewerId] = useState<string | null>(null)
   const [attachmentImportKind, setAttachmentImportKind] = useState<AttachmentImportKind | null>(null)
@@ -200,7 +210,7 @@ export default function App() {
   useEffect(() => {
     loadData().then((saved) => {
       const next = saved ?? getInitialData()
-      if (focusMode && requestedFocusProjectId) {
+      if (auxiliaryMode && requestedFocusProjectId) {
         const project = next.projects.find((item) => item.id === requestedFocusProjectId)
         if (project) {
           next.activeProjectId = project.id
@@ -233,6 +243,22 @@ export default function App() {
       return
     }
     if (sync?.type === 'focus-context' && focusMode) {
+      void loadData().then((saved) => {
+        if (!saved) return
+        const targetProject = saved.projects.find((item) => item.id === sync.projectId)
+        if (!targetProject) return
+        suppressNextSave.current = true
+        setData({
+          ...saved,
+          activeProjectId: targetProject.id,
+          activeChapterId: targetProject.chapters.some((item) => item.id === sync.chapterId)
+            ? sync.chapterId ?? ''
+            : targetProject.chapters[0]?.id ?? '',
+        })
+      })
+      return
+    }
+    if (sync?.type === 'review-context' && reviewMode) {
       void loadData().then((saved) => {
         if (!saved) return
         const targetProject = saved.projects.find((item) => item.id === sync.projectId)
@@ -281,7 +307,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title = focusMode ? 'StudyMKD · 专注笔记' : window.studyMKDDesktop ? 'StudyMKD' : '笔记 · 视频学习'
+    document.title = focusMode
+      ? 'StudyMKD · 专注笔记'
+      : reviewMode
+        ? 'StudyMKD · 专注复习'
+        : window.studyMKDDesktop ? 'StudyMKD' : '笔记 · 视频学习'
   }, [])
 
   useEffect(() => {
@@ -292,7 +322,9 @@ export default function App() {
 
   useEffect(() => {
     setEditingCardId('')
+    setSelectedReviewCardIds(new Set())
     setAttachmentViewerId(null)
+    setCardImportOpen(false)
   }, [data?.activeChapterId])
 
   useEffect(() => {
@@ -410,6 +442,17 @@ export default function App() {
     const url = new URL(window.location.href)
     url.search = new URLSearchParams({ focus: '1', projectId: project.id, chapterId: chapter.id }).toString()
     window.open(url, 'StudyMKDFocus', 'width=440,height=720')
+  }
+
+  const openFocusedReviewWindow = async () => {
+    if (!project || !chapter || !chapter.reviewCards.length) return
+    if (window.studyMKDDesktop) {
+      await window.studyMKDDesktop.openReviewWindow({ projectId: project.id, chapterId: chapter.id })
+      return
+    }
+    const url = new URL(window.location.href)
+    url.search = new URLSearchParams({ review: '1', projectId: project.id, chapterId: chapter.id }).toString()
+    window.open(url, 'StudyMKDReview', 'width=620,height=760')
   }
 
   const returnToMainWindow = () => {
@@ -773,22 +816,22 @@ export default function App() {
     return revealed.path
   }
 
-  const addReviewCard = () => {
-    if (!chapter) return
-    if (!selectedText) {
-      setToast('请先在笔记中选择一段内容')
-      return
-    }
-    const questionSeed = selectedText.length > 26 ? `${selectedText.slice(0, 26)}…` : selectedText
-    updateChapter({ reviewCards: [...chapter.reviewCards, {
-      id: makeId(),
-      question: `你能解释“${questionSeed}”吗？`,
-      answer: selectedText,
-      dueAt: new Date().toISOString(),
-      intervalDays: 0,
-      repetitions: 0,
-    }] })
-    setToast('已加入今日复习')
+  const importGeneratedCards = (cards: GeneratedCardDraft[], mode: CardImportMode) => {
+    if (!chapter || !cards.length) return
+    const dueAt = new Date().toISOString()
+    const imported = cards.map((card): ReviewCard => ({
+        id: makeId(),
+        question: card.question,
+        answer: card.answer,
+        sourceExcerpt: card.sourceExcerpt,
+        tags: card.tags,
+        dueAt,
+        intervalDays: 0,
+        repetitions: 0,
+      }))
+    updateChapter({ reviewCards: mode === 'replace' ? imported : [...chapter.reviewCards, ...imported] })
+    setSelectedReviewCardIds(new Set())
+    setToast(mode === 'replace' ? `已覆盖为 ${cards.length} 张复习卡片` : `已追加 ${cards.length} 张复习卡片`)
   }
 
   const scheduleCard = (cardId: string, rating: CardRating) => {
@@ -834,8 +877,38 @@ export default function App() {
   const deleteReviewCard = (card: ReviewCard) => {
     if (!chapter || !window.confirm('删除这张复习卡片？')) return
     updateChapter({ reviewCards: chapter.reviewCards.filter((item) => item.id !== card.id) })
+    setSelectedReviewCardIds((current) => {
+      const next = new Set(current)
+      next.delete(card.id)
+      return next
+    })
     if (editingCardId === card.id) setEditingCardId('')
     setToast('复习卡片已删除')
+  }
+
+  const toggleReviewCardSelection = (cardId: string) => {
+    setSelectedReviewCardIds((current) => {
+      const next = new Set(current)
+      if (next.has(cardId)) next.delete(cardId)
+      else next.add(cardId)
+      return next
+    })
+  }
+
+  const toggleAllReviewCards = () => {
+    if (!chapter?.reviewCards.length) return
+    const allSelected = chapter.reviewCards.every((card) => selectedReviewCardIds.has(card.id))
+    setSelectedReviewCardIds(allSelected ? new Set() : new Set(chapter.reviewCards.map((card) => card.id)))
+  }
+
+  const deleteSelectedReviewCards = () => {
+    if (!chapter || !selectedReviewCardIds.size) return
+    const selectedCount = chapter.reviewCards.filter((card) => selectedReviewCardIds.has(card.id)).length
+    if (!selectedCount || !window.confirm(`删除选中的 ${selectedCount} 张复习卡片？`)) return
+    updateChapter({ reviewCards: chapter.reviewCards.filter((card) => !selectedReviewCardIds.has(card.id)) })
+    setSelectedReviewCardIds(new Set())
+    setEditingCardId('')
+    setToast(`已删除 ${selectedCount} 张复习卡片`)
   }
 
   const moveActiveChapter = (direction: -1 | 1) => {
@@ -982,6 +1055,19 @@ export default function App() {
       : chapterElapsedSeconds > 0
         ? '已暂停'
         : '待开始'
+
+  if (reviewMode && chapter) {
+    return (
+      <FocusReviewView
+        projectTitle={project.title}
+        chapter={chapter}
+        desktop={Boolean(window.studyMKDDesktop)}
+        onRate={scheduleCard}
+        onShowMain={returnToMainWindow}
+        onClose={() => window.studyMKDDesktop ? void window.studyMKDDesktop.closeCurrentWindow() : window.close()}
+      />
+    )
+  }
 
   if (focusMode && chapter) {
     const chapterIndex = project.chapters.findIndex((item) => item.id === chapter.id)
@@ -1178,7 +1264,7 @@ export default function App() {
           <section className="content-section">
             <div className="section-title-row">
               <div><p className="eyebrow">学习记录</p><h3>我的笔记</h3></div>
-              <button className="secondary-button" type="button" onClick={addReviewCard}><Sparkles size={16} />制成卡片</button>
+              <button className="secondary-button" type="button" onClick={() => setCardImportOpen(true)}><Sparkles size={16} />AI 制卡</button>
             </div>
             {chapterLockedByFocus && <div className="editor-lock-notice"><PanelRightOpen size={15} /><span>本章节正在专注小窗中编辑，主窗口暂时只读。</span></div>}
             <NoteEditor
@@ -1191,7 +1277,7 @@ export default function App() {
                 if (screenshot) setEditingScreenshot(screenshot)
               }}
               onChange={(noteHtml) => updateChapter({ noteHtml })}
-              onSelectionChange={setSelectedText}
+              onSelectionChange={() => undefined}
             />
           </section>
 
@@ -1224,6 +1310,7 @@ export default function App() {
                     </div>
                     <div className="screenshot-fields">
                       <input aria-label="截图说明" value={item.caption} onChange={(event) => updateScreenshot(item.id, { caption: event.target.value })} placeholder="截图说明" />
+                      {item.url && <button className="icon-button screenshot-online-link" type="button" title={`打开线上地址：${item.url}`} onClick={() => void openOnlineUrl(item.url!)}><Link2 size={14} /></button>}
                       <div className="timestamp-input" title="可直接修改视频时间">
                         <Clock3 size={14} />
                         <input
@@ -1397,9 +1484,27 @@ export default function App() {
           </section>
 
           <section className="detail-section review-section">
-            <div className="detail-heading-row"><label className="detail-label">复习卡片</label><span>{chapter.reviewCards.length}</span></div>
-            {chapter.reviewCards.length ? chapter.reviewCards.map((card) => (
+            <div className="detail-heading-row review-heading-row">
+              <label className="review-select-all">
+                <input
+                  type="checkbox"
+                  aria-label="全选复习卡片"
+                  checked={chapter.reviewCards.length > 0 && chapter.reviewCards.every((card) => selectedReviewCardIds.has(card.id))}
+                  onChange={toggleAllReviewCards}
+                />
+                <span>复习卡片</span>
+              </label>
+              <div className="review-bulk-actions">
+                <span>{selectedReviewCardIds.size ? `${selectedReviewCardIds.size}/${chapter.reviewCards.length}` : chapter.reviewCards.length}</span>
+                <button className="icon-button danger" type="button" title="删除选中卡片" disabled={!selectedReviewCardIds.size} onClick={deleteSelectedReviewCards}><Trash2 size={14} /></button>
+              </div>
+            </div>
+            {chapter.reviewCards.length ? chapter.reviewCards.slice(0, REVIEW_CARD_PREVIEW_LIMIT).map((card) => (
               <article className={`review-card ${editingCardId === card.id ? 'editing' : ''}`} key={card.id}>
+                <label className="review-card-checkbox" title="选择卡片">
+                  <input type="checkbox" checked={selectedReviewCardIds.has(card.id)} onChange={() => toggleReviewCardSelection(card.id)} />
+                </label>
+                <div className="review-card-body">
                 {editingCardId === card.id ? (
                   <div className="review-card-editor">
                     <label>问题<input autoFocus value={cardDraft.question} onChange={(event) => setCardDraft({ ...cardDraft, question: event.target.value })} /></label>
@@ -1424,8 +1529,15 @@ export default function App() {
                     <button onClick={() => scheduleCard(card.id, 'good')}>掌握</button>
                   </div>
                 </>}
+                </div>
               </article>
             )) : <div className="quiet-empty"><AlignLeft size={18} /><span>暂无复习卡片</span></div>}
+            {!!chapter.reviewCards.length && (
+              <button className="review-more-button" type="button" onClick={() => void openFocusedReviewWindow()}>
+                <ExternalLink size={15} />
+                {chapter.reviewCards.length > REVIEW_CARD_PREVIEW_LIMIT ? `查看更多（${chapter.reviewCards.length} 张）` : '专注复习'}
+              </button>
+            )}
           </section>
           </> : <>
             <div className="panel-heading">
@@ -1467,6 +1579,13 @@ export default function App() {
       <BackupDialog open={backupOpen} data={data} onClose={() => setBackupOpen(false)} onRestore={restoreBackup} />
       <GlobalSearchDialog open={globalSearchOpen} data={data} onClose={() => setGlobalSearchOpen(false)} onOpen={openSearchResult} />
       <MoveChapterDialog open={moveChapterOpen} chapter={chapter} currentProject={project} projects={data.projects} onClose={() => setMoveChapterOpen(false)} onMove={moveActiveChapterToProject} />
+      {chapter && <CardImportDialog
+        open={cardImportOpen}
+        project={project}
+        chapter={chapter}
+        onClose={() => setCardImportOpen(false)}
+        onImport={importGeneratedCards}
+      />}
       {editingScreenshot && (
         <Suspense fallback={<div className="annotator-loading-screen">正在打开图片编辑器…</div>}>
           <ImageAnnotator

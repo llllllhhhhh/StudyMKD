@@ -2,6 +2,7 @@ import saveAs from 'file-saver'
 import TurndownService from 'turndown'
 import type { Chapter, CourseProject, Screenshot } from '../types'
 import { materializeChapterScreenshots, nativeBridgeCapabilities, screenshotManagedRelativePath } from './nativeBridge'
+import { normalizeOnlineUrl } from './onlineUrl'
 
 const cleanName = (value: string) => value.replace(/[\\/:*?"<>|]/g, '-').trim()
 const cleanLineText = (value: string) => value.replace(/\r?\n/g, ' ').trim()
@@ -51,7 +52,10 @@ function noteMarkdown(
       const reference = screenshot
         ? imageReference(screenshot, chapterIndex, screenshotIndex)
         : image.src
-      return reference ? `\n\n![${alt}](<${reference}>)\n\n` : ''
+      if (!reference) return ''
+      const onlineUrl = normalizeOnlineUrl(screenshot?.url ?? '')
+      const imageMarkdown = `![${alt}](<${reference}>)`
+      return `\n\n${onlineUrl ? `[${imageMarkdown}](<${onlineUrl}>)` : imageMarkdown}\n\n`
     },
   })
 
@@ -99,9 +103,12 @@ export function buildProjectMarkdown(
     standaloneScreenshots.forEach((screenshot) => {
       const screenshotIndex = chapter.screenshots.findIndex((item) => item.id === screenshot.id)
       const alt = escapeAltText(screenshot.caption || screenshot.name || `视频截图 ${screenshotIndex + 1}`)
-      lines.push(`![${alt}](<${imageReference(screenshot, chapterIndex, screenshotIndex)}>)`)
+      const imageMarkdown = `![${alt}](<${imageReference(screenshot, chapterIndex, screenshotIndex)}>)`
+      const onlineUrl = normalizeOnlineUrl(screenshot.url ?? '')
+      lines.push(onlineUrl ? `[${imageMarkdown}](<${onlineUrl}>)` : imageMarkdown)
       if (screenshot.timestamp) lines.push('', `**视频位置：** ${cleanLineText(screenshot.timestamp)}`)
       if (screenshot.caption) lines.push('', `**截图说明：** ${cleanLineText(screenshot.caption)}`)
+      if (onlineUrl) lines.push('', `**线上地址：** <${onlineUrl}>`)
       lines.push('')
     })
   })

@@ -25,13 +25,17 @@ export default function StudyStatsDialog({ open, project, onClose }: Props) {
   const stats = useMemo(() => buildStudyStats(project, now), [now, project])
   if (!open) return null
 
-  const monthLabels: Array<{ label: string; index: number }> = []
+  const monthLabelsByColumn = new Map<number, { label: string; column: number }>()
+  let previousMonth = ''
   stats.daily.forEach((day, index) => {
     const date = new Date(`${day.date}T00:00:00`)
-    if (date.getDate() <= 7 || (index > 0 && date.getDate() < new Date(`${stats.daily[index - 1].date}T00:00:00`).getDate())) {
-      monthLabels.push({ label: `${date.getMonth() + 1}月`, index })
-    }
+    const monthKey = `${date.getFullYear()}-${date.getMonth()}`
+    if (monthKey === previousMonth) return
+    previousMonth = monthKey
+    const column = Math.floor(index / 7) + 1
+    monthLabelsByColumn.set(column, { label: `${date.getMonth() + 1}月`, column })
   })
+  const monthLabels = Array.from(monthLabelsByColumn.values())
 
   const formatHeatmapDate = (value: string) => {
     const date = new Date(`${value}T00:00:00`)
@@ -64,14 +68,14 @@ export default function StudyStatsDialog({ open, project, onClose }: Props) {
                 {stats.daily.map((day) => (
                   <span
                     key={day.date}
-                    className={`heatmap-day ${heatmapColor(day.seconds)}`}
-                    title={`${formatHeatmapDate(day.date)}：${formatStudyDuration(day.seconds)}`}
+                    className={`heatmap-day ${day.future ? 'future' : heatmapColor(day.seconds)}`}
+                    title={day.future ? `${formatHeatmapDate(day.date)}：尚未到达` : `${formatHeatmapDate(day.date)}：${formatStudyDuration(day.seconds)}`}
                   />
                 ))}
               </div>
               <div className="heatmap-months">
                 {monthLabels.map((month) => (
-                  <span key={month.index} style={{ gridColumnStart: month.index + 1 }}>{month.label}</span>
+                  <span key={month.column} style={{ gridColumnStart: month.column }}>{month.label}</span>
                 ))}
               </div>
               <div className="heatmap-legend">

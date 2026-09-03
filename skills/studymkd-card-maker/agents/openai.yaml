@@ -1,0 +1,4 @@
+interface:
+  display_name: "StudyMKD Card Maker"
+  short_description: "Generate validated review cards from StudyMKD chapter notes"
+  default_prompt: "Use $studymkd-card-maker to generate import-ready review cards from this StudyMKD note export."
